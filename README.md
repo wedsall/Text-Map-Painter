@@ -32,3 +32,5 @@ git clone https://github.com/wedsall/Text-Map-Painter.git
 cd Text-Map-Painter
 python map_editor.py
 
+This code does not create the initial blank map. Use a pre-created map. Make sure each row is exactly the same length for best results.
+
