@@ -30,4 +30,5 @@ Clone the repository:
 ```bash
 git clone https://github.com/wedsall/Text-Map-Painter.git
 cd Text-Map-Painter
+python map_editor.py
 
