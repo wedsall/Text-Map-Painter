@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 import numpy as np
 import math
 from functools import partial
@@ -10,6 +10,11 @@ import pstats
 import io
 from concurrent.futures import ThreadPoolExecutor
 import time
+from collections import deque
+import os
+import gc
+import tracemalloc
+import datetime
 
 class TextGridEditor:
 
@@ -90,8 +95,183 @@ class TextGridEditor:
         self.select_spaces_only = False
 
         self.previous_visible_range = set()  # Track previous visible rows
+        self.init_memory_debugger()
 
         print("TextGridEditor initialized")
+
+    def init_memory_debugger(self):
+        """Low-overhead periodic memory diagnostics for leak hunting."""
+        self.mem_debug_enabled = False
+        self.mem_debug_interval_ms = 20000
+        self.mem_debug_after_id = None
+        self.mem_debug_tick_count = 0
+        self.mem_debug_start_time = time.time()
+        self.mem_debug_prev_snapshot = None
+        self.mem_debug_heavy = False
+        self.mem_debug_echo_stdout = False
+        self.mem_debug_log_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "map_editor5_memdebug.log"
+        )
+        self._psutil_process = None
+
+        try:
+            import psutil  # Optional, better RSS reporting if installed
+            self._psutil_process = psutil.Process(os.getpid())
+        except Exception:
+            self._psutil_process = None
+
+        if tracemalloc.is_tracing():
+            tracemalloc.stop()
+
+        self._write_memory_log("=== Memory debug initialized (disabled by default) ===")
+
+    def set_memory_debug_enabled(self, enabled, heavy=False):
+        self.mem_debug_enabled = bool(enabled)
+        self.mem_debug_heavy = bool(heavy)
+        if self.mem_debug_enabled:
+            if self.mem_debug_heavy and (not tracemalloc.is_tracing()):
+                tracemalloc.start(25)
+            self._write_memory_log("Memory debug ENABLED")
+            self.schedule_memory_debug_tick()
+            self.debug_label.config(text="Memory debug enabled")
+        else:
+            if self.mem_debug_after_id is not None:
+                try:
+                    self.root.after_cancel(self.mem_debug_after_id)
+                except Exception:
+                    pass
+                self.mem_debug_after_id = None
+            if tracemalloc.is_tracing():
+                tracemalloc.stop()
+            self._write_memory_log("Memory debug DISABLED")
+            self.debug_label.config(text="Memory debug disabled")
+
+    def schedule_memory_debug_tick(self):
+        if not self.mem_debug_enabled:
+            return
+        if self.mem_debug_after_id is not None:
+            return
+        self.mem_debug_after_id = self.root.after(self.mem_debug_interval_ms, self._memory_debug_tick)
+
+    def _write_memory_log(self, line):
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        text = f"[{timestamp}] {line}"
+        if self.mem_debug_echo_stdout:
+            print(text)
+        try:
+            with open(self.mem_debug_log_path, "a", encoding="utf-8") as fh:
+                fh.write(text + "\n")
+        except OSError:
+            pass
+
+    def _get_process_rss_mb(self):
+        if self._psutil_process is not None:
+            try:
+                return self._psutil_process.memory_info().rss / (1024.0 * 1024.0)
+            except Exception:
+                pass
+
+        # Windows stdlib fallback (no psutil dependency).
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            GetCurrentProcess = ctypes.windll.kernel32.GetCurrentProcess
+            GetProcessMemoryInfo = ctypes.windll.psapi.GetProcessMemoryInfo
+            counters = PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+            ok = GetProcessMemoryInfo(GetCurrentProcess(), ctypes.byref(counters), counters.cb)
+            if ok:
+                return counters.WorkingSetSize / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
+        return -1.0
+
+    def _estimate_undo_cells(self):
+        if not hasattr(self, "undo_stack") or not self.undo_stack:
+            return 0
+        total = 0
+        for action in self.undo_stack:
+            try:
+                total += len(action)
+            except Exception:
+                pass
+        return total
+
+    def dump_memory_snapshot(self):
+        """Force an immediate diagnostic sample."""
+        self._memory_debug_tick(force=True)
+
+    def _memory_debug_tick(self, force=False):
+        self.mem_debug_after_id = None
+        if not self.mem_debug_enabled and not force:
+            return
+
+        self.mem_debug_tick_count += 1
+        elapsed = time.time() - self.mem_debug_start_time
+
+        rss_mb = self._get_process_rss_mb()
+        traced_cur_mb = -1.0
+        traced_peak_mb = -1.0
+        if tracemalloc.is_tracing():
+            traced_cur, traced_peak = tracemalloc.get_traced_memory()
+            traced_cur_mb = traced_cur / (1024.0 * 1024.0)
+            traced_peak_mb = traced_peak / (1024.0 * 1024.0)
+
+        canvas_item_count = -1
+        try:
+            canvas_item_count = len(self.canvas.find_all())
+        except Exception:
+            pass
+
+        line = (
+            f"uptime={elapsed:.1f}s rss_mb={rss_mb:.2f} traced_mb={traced_cur_mb:.2f}/{traced_peak_mb:.2f} "
+            f"canvas_items={canvas_item_count} canvas_cells={len(self.canvas_objects)} "
+            f"selected={len(self.selected_cells)} prev_visible={len(self.previous_visible_range)} "
+            f"undo_actions={len(self.undo_stack)} undo_cells={self._estimate_undo_cells()} "
+            f"gc_counts={gc.get_count()}"
+        )
+        self._write_memory_log(line)
+
+        # Heavy mode only: capture growth stats from tracemalloc snapshots.
+        if self.mem_debug_heavy and tracemalloc.is_tracing() and (self.mem_debug_tick_count % 6 == 0 or force):
+            try:
+                snapshot = tracemalloc.take_snapshot()
+                if self.mem_debug_prev_snapshot is not None:
+                    growth = snapshot.compare_to(self.mem_debug_prev_snapshot, "lineno")
+                    top_growth = []
+                    for stat in growth[:5]:
+                        size_kib = stat.size_diff / 1024.0
+                        count_diff = stat.count_diff
+                        if size_kib <= 0 and count_diff <= 0:
+                            continue
+                        top_growth.append(
+                            f"{stat.traceback.format()[-1].strip()} +{size_kib:.1f}KiB ({count_diff:+d})"
+                        )
+                    if top_growth:
+                        self._write_memory_log("top_growth: " + " | ".join(top_growth))
+                self.mem_debug_prev_snapshot = snapshot
+            except Exception as e:
+                self._write_memory_log(f"snapshot_error: {e}")
+
+        if self.mem_debug_enabled:
+            self.schedule_memory_debug_tick()
 
 
     def setup_menu(self):
@@ -120,6 +300,23 @@ class TextGridEditor:
         menu.add_cascade(label="Brush Size", menu=brush_menu)
         for size in [1, 2, 4, 8, 10]:
             brush_menu.add_command(label=f"{size}x{size}", command=partial(self.set_paintbrush_size, size))
+
+        diagnostics_menu = tk.Menu(menu, tearoff=0)
+        menu.add_cascade(label="Diagnostics", menu=diagnostics_menu)
+        diagnostics_menu.add_command(label="Dump Memory Snapshot", command=self.dump_memory_snapshot)
+        diagnostics_menu.add_command(
+            label="Enable Memory Debug (Light)",
+            command=lambda: self.set_memory_debug_enabled(True, heavy=False)
+        )
+        diagnostics_menu.add_command(
+            label="Enable Memory Debug (Heavy)",
+            command=lambda: self.set_memory_debug_enabled(True, heavy=True)
+        )
+        diagnostics_menu.add_command(label="Disable Memory Debug", command=lambda: self.set_memory_debug_enabled(False))
+        diagnostics_menu.add_command(
+            label="Show Memory Log Path",
+            command=lambda: messagebox.showinfo("Memory Log", self.mem_debug_log_path)
+        )
 
     def set_paintbrush_size(self, size):
         """Set the size of the paintbrush."""
@@ -167,8 +364,28 @@ class TextGridEditor:
             for shape in BIOME_PROFILES[biome_type]["shapes"]:
                 menu.add_command(label=f"{shape.title()}", 
                                 command=lambda b=biome_type, s=shape: self.generate_biome(b, s))
+            menu.add_command(label="Thin Out", command=lambda: self.thin_out_forest("thin"))
+            menu.add_command(label="Heavy Thin Out", command=lambda: self.thin_out_forest("heavy"))
             
             menu_btn["menu"] = menu  # Attach the menu to the button
+
+        ocean_btn = ttk.Menubutton(bottom_frame, text="Ocean Fill", direction="below")
+        ocean_btn.pack(side=tk.LEFT, padx=5)
+        ocean_menu = tk.Menu(ocean_btn, tearoff=0)
+        ocean_menu.add_command(
+            label="Fill blanks with W (run >= 5)",
+            command=lambda: self.fill_ocean_blanks(water_char='W', min_run=5, adjacency_threshold=2)
+        )
+        ocean_menu.add_command(
+            label="Fill blanks with W (run >= 10)",
+            command=lambda: self.fill_ocean_blanks(water_char='W', min_run=10, adjacency_threshold=2)
+        )
+        ocean_menu.add_command(
+            label="Fill blanks with w (run >= 5)",
+            command=lambda: self.fill_ocean_blanks(water_char='w', min_run=5, adjacency_threshold=2)
+        )
+        ocean_menu.add_command(label="Custom...", command=self.fill_ocean_blanks_custom)
+        ocean_btn["menu"] = ocean_menu
 
     def setup_zoom_slider(self):
         zoom_frame = ttk.Frame(self.root)
@@ -410,15 +627,18 @@ class TextGridEditor:
     def load_text_file(self, filepath):
         try:
             with open(filepath, 'r', encoding='utf-8') as file:
-                lines = file.readlines()
+                # Keep trailing spaces, but strip line endings consistently across LF/CRLF files.
+                lines = [line.rstrip('\r\n') for line in file]
+
+            if not lines:
+                raise ValueError("File is empty.")
 
             self.rows = len(lines)
-            self.cols = max(len(line.rstrip('\n')) for line in lines)
+            self.cols = max(len(line) for line in lines)
 
             self.grid = np.full((self.rows, self.cols), ord(' '), dtype=np.uint32)
 
             for row, line in enumerate(lines):
-                line = line.rstrip('\n')
                 for col, char in enumerate(line):
                     self.grid[row, col] = ord(char)
 
@@ -1886,6 +2106,240 @@ class TextGridEditor:
 
         self.update_selection()
 
+    def _count_neighbors(self, mask, include_diagonal=True):
+        padded = np.pad(mask.astype(np.uint8), 1, mode='constant')
+        count = (
+            padded[:-2, 1:-1] +
+            padded[2:, 1:-1] +
+            padded[1:-1, :-2] +
+            padded[1:-1, 2:]
+        )
+
+        if include_diagonal:
+            count = (
+                count +
+                padded[:-2, :-2] +
+                padded[:-2, 2:] +
+                padded[2:, :-2] +
+                padded[2:, 2:]
+            )
+
+        return count
+
+    def _compute_blank_run_lengths(self, mask):
+        rows, cols = mask.shape
+        horiz = np.zeros((rows, cols), dtype=np.int32)
+        vert = np.zeros((rows, cols), dtype=np.int32)
+
+        for row in range(rows):
+            col = 0
+            while col < cols:
+                if not mask[row, col]:
+                    col += 1
+                    continue
+                start = col
+                while col < cols and mask[row, col]:
+                    col += 1
+                run_len = col - start
+                horiz[row, start:col] = run_len
+
+        for col in range(cols):
+            row = 0
+            while row < rows:
+                if not mask[row, col]:
+                    row += 1
+                    continue
+                start = row
+                while row < rows and mask[row, col]:
+                    row += 1
+                run_len = row - start
+                vert[start:row, col] = run_len
+
+        return horiz, vert
+
+    def _flood_fill_border_blanks(self, blank_mask):
+        rows, cols = blank_mask.shape
+        connected = np.zeros_like(blank_mask, dtype=bool)
+        queue = deque()
+
+        def seed(r, c):
+            if blank_mask[r, c] and not connected[r, c]:
+                connected[r, c] = True
+                queue.append((r, c))
+
+        for col in range(cols):
+            seed(0, col)
+            seed(rows - 1, col)
+        for row in range(rows):
+            seed(row, 0)
+            seed(row, cols - 1)
+
+        while queue:
+            row, col = queue.popleft()
+
+            if row > 0 and blank_mask[row - 1, col] and not connected[row - 1, col]:
+                connected[row - 1, col] = True
+                queue.append((row - 1, col))
+            if row < rows - 1 and blank_mask[row + 1, col] and not connected[row + 1, col]:
+                connected[row + 1, col] = True
+                queue.append((row + 1, col))
+            if col > 0 and blank_mask[row, col - 1] and not connected[row, col - 1]:
+                connected[row, col - 1] = True
+                queue.append((row, col - 1))
+            if col < cols - 1 and blank_mask[row, col + 1] and not connected[row, col + 1]:
+                connected[row, col + 1] = True
+                queue.append((row, col + 1))
+
+        return connected
+
+    def _compute_blank_mask(self):
+        """Treat common whitespace and zero-value cells as blank."""
+        if self.grid is None:
+            return None
+        blank_values = np.array([
+            0,
+            ord(' '),
+            ord('\t'),
+            ord('\r'),
+            ord('\n'),
+        ], dtype=self.grid.dtype)
+        return np.isin(self.grid, blank_values)
+
+    def fill_ocean_blanks(self, water_char='W', min_run=5, adjacency_threshold=2):
+        if self.grid is None or self.rows == 0 or self.cols == 0:
+            messagebox.showwarning("No Map", "Load a map first.")
+            return
+
+        if water_char not in ('w', 'W', 'r', 'R'):
+            water_char = 'W'
+
+        min_run = max(1, int(min_run))
+        adjacency_threshold = max(1, min(8, int(adjacency_threshold)))
+
+        blank_mask = self._compute_blank_mask()
+        if not np.any(blank_mask):
+            self.debug_label.config(text="Ocean fill: no blank cells found.")
+            return
+
+        external_blank = self._flood_fill_border_blanks(blank_mask)
+        if not np.any(external_blank):
+            border_blank_count = (
+                np.count_nonzero(blank_mask[0, :]) +
+                np.count_nonzero(blank_mask[-1, :]) +
+                np.count_nonzero(blank_mask[:, 0]) +
+                np.count_nonzero(blank_mask[:, -1])
+            )
+            self.debug_label.config(
+                text=f"Ocean fill: no border-connected blanks. blank={int(np.count_nonzero(blank_mask))}, border_blank={int(border_blank_count)}"
+            )
+            print(
+                f"Ocean fill border flood failed: blanks={int(np.count_nonzero(blank_mask))}, border_blank={int(border_blank_count)}"
+            )
+            return
+
+        horiz_runs, vert_runs = self._compute_blank_run_lengths(external_blank)
+        run_ok = (horiz_runs >= min_run) | (vert_runs >= min_run)
+
+        water_mask = (
+            (self.grid == ord('w')) |
+            (self.grid == ord('W')) |
+            (self.grid == ord('r')) |
+            (self.grid == ord('R'))
+        )
+        water_neighbors = self._count_neighbors(water_mask, include_diagonal=True)
+
+        fill_mask = external_blank & ((water_neighbors >= 1) | run_ok)
+
+        border_mask = np.zeros_like(external_blank, dtype=bool)
+        border_mask[0, :] = True
+        border_mask[-1, :] = True
+        border_mask[:, 0] = True
+        border_mask[:, -1] = True
+        fill_mask |= external_blank & border_mask
+
+        max_iterations = max(self.rows, self.cols)
+        for _ in range(max_iterations):
+            neighbor_count = self._count_neighbors(fill_mask | water_mask, include_diagonal=True)
+            new_fill = external_blank & (~fill_mask) & (run_ok | (neighbor_count >= adjacency_threshold))
+            if not np.any(new_fill):
+                break
+            fill_mask |= new_fill
+
+        changed_mask = fill_mask & (self.grid != ord(water_char))
+        changed_cells = np.argwhere(changed_mask)
+        if changed_cells.size == 0:
+            self.debug_label.config(text="Ocean fill: no eligible blanks matched the rules.")
+            return
+
+        undo_action = []
+        for row, col in changed_cells:
+            undo_action.append((int(row), int(col), chr(self.grid[row, col])))
+
+        self.grid[changed_mask] = ord(water_char)
+
+        self.undo_stack.append(undo_action)
+        if len(self.undo_stack) > self.max_undo:
+            self.undo_stack.pop(0)
+
+        self._redraw_visible_cells()
+        self.update_selection()
+
+        self.debug_label.config(
+            text=(
+                f"Ocean fill complete: {len(changed_cells)} cells -> '{water_char}' "
+                f"(min run {min_run}, adjacency {adjacency_threshold})"
+            )
+        )
+        print(
+            f"Ocean fill complete. changed={len(changed_cells)}, "
+            f"water='{water_char}', min_run={min_run}, adjacency={adjacency_threshold}"
+        )
+
+    def fill_ocean_blanks_custom(self):
+        if self.grid is None:
+            messagebox.showwarning("No Map", "Load a map first.")
+            return
+
+        default_max = max(10, self.rows, self.cols)
+        min_run = simpledialog.askinteger(
+            "Ocean Fill",
+            "Minimum blank run length (seed rule):",
+            initialvalue=5,
+            minvalue=1,
+            maxvalue=default_max
+        )
+        if min_run is None:
+            return
+
+        adjacency_threshold = simpledialog.askinteger(
+            "Ocean Fill",
+            "Adjacency threshold (1-8):",
+            initialvalue=2,
+            minvalue=1,
+            maxvalue=8
+        )
+        if adjacency_threshold is None:
+            return
+
+        water_char_input = simpledialog.askstring(
+            "Ocean Fill",
+            "Water character ('w', 'W', 'r', or 'R'):",
+            initialvalue='W'
+        )
+        if not water_char_input:
+            return
+
+        water_char = water_char_input[0]
+        if water_char not in ('w', 'W', 'r', 'R'):
+            messagebox.showwarning("Invalid Water Char", "Only 'w', 'W', 'r', or 'R' is supported. Using 'W'.")
+            water_char = 'W'
+
+        self.fill_ocean_blanks(
+            water_char=water_char,
+            min_run=min_run,
+            adjacency_threshold=adjacency_threshold
+        )
+
     def get_rectangular_selection(self):
         if not (self.rect_start and self.rect_end):
             return set()
@@ -2185,6 +2639,42 @@ class TextGridEditor:
         distance = max(0, min(1, distance + randomness))
         
         return distance
+    
+    def thin_out_forest(self, mode="thin"):
+        """Randomly thin out selected forest cells (f/F → . or space)."""
+        if not self.selected_cells:
+            messagebox.showwarning("No Selection", "Please select an area first.")
+            return
+
+        # Adjustable thinning probabilities
+        if mode == "thin":
+            chance_to_thin = 0.25   # 25% of selected forest cells
+            dot_vs_space = 0.7      # 70% -> '.', 30% -> ' '
+        elif mode == "heavy":
+            chance_to_thin = 0.45   # 45% of selected forest cells
+            dot_vs_space = 0.3      # 40% '.' vs 60% space
+        else:
+            return
+
+        undo_action = []
+        for row, col in self.selected_cells:
+            if 0 <= row < self.rows and 0 <= col < self.cols:
+                current_char = chr(self.grid[row, col])
+                if current_char in ('f', 'F', '.'):   
+                    if random.random() < chance_to_thin:
+                        new_char = '.' if random.random() < dot_vs_space else ' '
+                        if current_char != new_char:
+                            undo_action.append((row, col, current_char))
+                            self.grid[row, col] = ord(new_char)
+                            self.redraw_cell(row, col)
+
+        if undo_action:
+            self.undo_stack.append(undo_action)
+            if len(self.undo_stack) > self.max_undo:
+                self.undo_stack.pop(0)
+
+        self.update_selection()
+        print(f"🌲 Forest thinned with mode={mode}, changes={len(undo_action)}")
 
 BIOME_PROFILES = {
     "forest": {
