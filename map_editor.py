@@ -53,6 +53,7 @@ class TextGridEditor:
 
             # **✅ Sand Biome Colors**
             ',': 'goldenrod',          # Light sand
+            '`': 'goldenrod',          # Wind-blown light sand
             'z': 'goldenrod',      # Small dunes
             'd': 'dark goldenrod',           # Taller dunes
             'D': 'dark goldenrod', # Sand plateaus
@@ -84,6 +85,7 @@ class TextGridEditor:
         self.explosion_percentages = [10, 20, 30, 30, 10]  # ['.', '.', 'f', 'F', '.']
         self.implosion_percentages = [30, 30, 30, 10]  # ['F', 'f', '.', '.']
         self.randomness = tk.IntVar(value=0)  # Changed from DoubleVar to IntVar
+        self.extra_spaces = tk.IntVar(value=0)
 
         self.setup_menu()
         self.setup_ui()
@@ -93,6 +95,7 @@ class TextGridEditor:
         self.max_undo = 50
 
         self.select_spaces_only = False
+        self.smart_select_pending = None
 
         self.previous_visible_range = set()  # Track previous visible rows
         self.init_memory_debugger()
@@ -281,6 +284,7 @@ class TextGridEditor:
         file_menu = tk.Menu(menu, tearoff=0)
         menu.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Open", command=self.open_file)
+        file_menu.add_command(label="Default Map", command=self.create_default_map_dialog)
         file_menu.add_command(label="Save", command=self.save_to_file)
 
         view_menu = tk.Menu(menu, tearoff=0)
@@ -353,7 +357,13 @@ class TextGridEditor:
         bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
 
         # Add biome generation buttons
-        biome_options = [("Forest", "forest"), ("Swamp", "swamp"), ("Sand", "sand")]
+        biome_options = [
+            ("Forest", "forest"),
+            ("Grasslands", "grasslands"),
+            ("Swamp", "swamp"),
+            ("Sand", "sand"),
+            ("Dry Sand", "dry_sand"),
+        ]
 
         for label, biome_type in biome_options:
             menu_btn = ttk.Menubutton(bottom_frame, text=label, direction="below")
@@ -369,23 +379,19 @@ class TextGridEditor:
             
             menu_btn["menu"] = menu  # Attach the menu to the button
 
-        ocean_btn = ttk.Menubutton(bottom_frame, text="Ocean Fill", direction="below")
-        ocean_btn.pack(side=tk.LEFT, padx=5)
-        ocean_menu = tk.Menu(ocean_btn, tearoff=0)
-        ocean_menu.add_command(
-            label="Fill blanks with W (run >= 5)",
-            command=lambda: self.fill_ocean_blanks(water_char='W', min_run=5, adjacency_threshold=2)
+        smart_select_btn = ttk.Menubutton(bottom_frame, text="Smart Select", direction="below")
+        smart_select_btn.pack(side=tk.LEFT, padx=5)
+        smart_select_menu = tk.Menu(smart_select_btn, tearoff=0)
+        smart_select_menu.add_command(
+            label="Blank Region (run >= 5, adjacency 2)",
+            command=lambda: self.arm_smart_select(min_run=5, adjacency_threshold=2, min_region_size=18, replace_selection=True)
         )
-        ocean_menu.add_command(
-            label="Fill blanks with W (run >= 10)",
-            command=lambda: self.fill_ocean_blanks(water_char='W', min_run=10, adjacency_threshold=2)
+        smart_select_menu.add_command(
+            label="Blank Region (run >= 8, adjacency 3)",
+            command=lambda: self.arm_smart_select(min_run=8, adjacency_threshold=3, min_region_size=28, replace_selection=True)
         )
-        ocean_menu.add_command(
-            label="Fill blanks with w (run >= 5)",
-            command=lambda: self.fill_ocean_blanks(water_char='w', min_run=5, adjacency_threshold=2)
-        )
-        ocean_menu.add_command(label="Custom...", command=self.fill_ocean_blanks_custom)
-        ocean_btn["menu"] = ocean_menu
+        smart_select_menu.add_command(label="Custom...", command=self.arm_smart_select_custom)
+        smart_select_btn["menu"] = smart_select_menu
 
     def setup_zoom_slider(self):
         zoom_frame = ttk.Frame(self.root)
@@ -402,18 +408,42 @@ class TextGridEditor:
         ttk.Label(zoom_frame, text="%").pack(side=tk.LEFT)
 
     def setup_randomness_slider(self):
-        randomness_frame = ttk.Frame(self.root)
-        randomness_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        controls_row = ttk.Frame(self.root)
+        controls_row.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
 
+        randomness_frame = ttk.Frame(controls_row)
+        randomness_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         ttk.Label(randomness_frame, text="Randomness:").pack(side=tk.LEFT)
-        self.randomness_slider = ttk.Scale(randomness_frame, from_=0, to=50, orient=tk.HORIZONTAL, 
-                                           command=self.on_randomness_change, variable=self.randomness,
-                                           length=150)
+        self.randomness_slider = ttk.Scale(
+            randomness_frame,
+            from_=0,
+            to=50,
+            orient=tk.HORIZONTAL,
+            command=self.on_randomness_change,
+            variable=self.randomness,
+            length=130
+        )
         self.randomness_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        
-        randomness_label = ttk.Label(randomness_frame, textvariable=self.randomness)
+        randomness_label = ttk.Label(randomness_frame, textvariable=self.randomness, width=3)
         randomness_label.pack(side=tk.LEFT)
         ttk.Label(randomness_frame, text="%").pack(side=tk.LEFT)
+
+        spaces_frame = ttk.Frame(controls_row)
+        spaces_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        ttk.Label(spaces_frame, text="Extra Spaces:").pack(side=tk.LEFT)
+        self.extra_spaces_slider = ttk.Scale(
+            spaces_frame,
+            from_=0,
+            to=100,
+            orient=tk.HORIZONTAL,
+            command=self.on_extra_spaces_change,
+            variable=self.extra_spaces,
+            length=130
+        )
+        self.extra_spaces_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        spaces_label = ttk.Label(spaces_frame, textvariable=self.extra_spaces, width=3)
+        spaces_label.pack(side=tk.LEFT)
+        ttk.Label(spaces_frame, text="%").pack(side=tk.LEFT)
 
     def on_mouse_motion(self, event):
         """Fixed hover preview with canvas boundary checking."""
@@ -623,6 +653,66 @@ class TextGridEditor:
         filepath = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
         if filepath:
             self.load_text_file(filepath)
+
+    def create_default_map_dialog(self):
+        """Prompt for X/Y size and create a new blank map."""
+        default_x = self.cols if self.cols > 0 else 120
+        default_y = self.rows if self.rows > 0 else 60
+
+        x_size = simpledialog.askinteger(
+            "Default Map",
+            "X size (columns):",
+            initialvalue=default_x,
+            minvalue=1,
+            maxvalue=10000
+        )
+        if x_size is None:
+            return
+
+        y_size = simpledialog.askinteger(
+            "Default Map",
+            "Y size (rows):",
+            initialvalue=default_y,
+            minvalue=1,
+            maxvalue=10000
+        )
+        if y_size is None:
+            return
+
+        self.create_default_map(x_size, y_size)
+
+    def create_default_map(self, x_size, y_size):
+        """Create a blank map and refresh the canvas."""
+        self.cols = int(x_size)
+        self.rows = int(y_size)
+        self.grid = np.full((self.rows, self.cols), ord(' '), dtype=np.uint32)
+        self.undo_stack.clear()
+
+        self._reset_after_new_grid()
+        self.debug_label.config(text=f"Default blank map created: {self.cols}x{self.rows} (XxY)")
+        print(f"Default blank map created: cols={self.cols}, rows={self.rows}")
+
+    def _reset_after_new_grid(self):
+        """Reset canvas/selection state after loading or creating a grid."""
+        self.canvas.delete("all")
+        self.canvas_objects.clear()
+        self.selected_cells.clear()
+        self.previous_visible_range = set()
+        self.rect_start = None
+        self.rect_end = None
+        self.region_selected = False
+        self.is_selecting = False
+        self.smart_select_pending = None
+
+        if hasattr(self, 'canvas_operation_count'):
+            self.canvas_operation_count = 0
+
+        self.update_scrollregion()
+        self.canvas.update_idletasks()
+        self._redraw_visible_cells_force_complete()
+        self.canvas.xview_moveto(0)
+        self.canvas.yview_moveto(0)
+        self.root.after(100, self._redraw_visible_cells_force_complete)
 
     def load_text_file(self, filepath):
         try:
@@ -1190,6 +1280,19 @@ class TextGridEditor:
 
         print(f"🖱️ CLICK: ({row}, {col}), Ctrl: {ctrl_held}, Space-only: {self.select_spaces_only}")
 
+        if self.smart_select_pending and not ctrl_held:
+            settings = self.smart_select_pending
+            self.smart_select_pending = None
+            self.smart_select_at(
+                row=row,
+                col=col,
+                min_run=settings["min_run"],
+                adjacency_threshold=settings["adjacency_threshold"],
+                min_region_size=settings["min_region_size"],
+                replace_selection=settings["replace_selection"],
+            )
+            return
+
         if ctrl_held:  # Ctrl+Click to remove from selection
             cells_to_remove = set()
             for d_row in range(self.paintbrush_size):
@@ -1566,9 +1669,10 @@ class TextGridEditor:
         for row, col in self.selected_cells:
             if 0 <= row < self.rows and 0 <= col < self.cols:
                 old_char = chr(self.grid[row, col])
-                if old_char != char:
+                new_char = self.apply_extra_spaces_to_char(char)
+                if old_char != new_char:
                     undo_action.append((row, col, old_char))
-                    self.grid[row, col] = ord(char)  # Direct fast update
+                    self.grid[row, col] = ord(new_char)  # Direct fast update
                     cells_changed += 1
                     
                     # **✅ TRACK VISIBLE CELLS FOR IMMEDIATE UPDATE**
@@ -1652,9 +1756,10 @@ class TextGridEditor:
         for row, col in self.selected_cells:
             if 0 <= row < self.rows and 0 <= col < self.cols:
                 old_char = chr(self.grid[row, col])
-                if old_char != char:
+                new_char = self.apply_extra_spaces_to_char(char)
+                if old_char != new_char:
                     undo_action.append((row, col, old_char))
-                    updates.append((row, col, ord(char)))
+                    updates.append((row, col, ord(new_char)))
                     cells_changed += 1
 
         if updates:
@@ -1688,9 +1793,10 @@ class TextGridEditor:
         for row, col in self.selected_cells:
             if 0 <= row < self.rows and 0 <= col < self.cols:
                 old_char = chr(self.grid[row, col])
-                if old_char != char:
+                new_char = self.apply_extra_spaces_to_char(char)
+                if old_char != new_char:
                     undo_action.append((row, col, old_char))
-                    self.grid[row, col] = ord(char)  # Direct grid update
+                    self.grid[row, col] = ord(new_char)  # Direct grid update
                     updates.append((row, col))
                     cells_changed += 1
 
@@ -2093,9 +2199,10 @@ class TextGridEditor:
         for row, col in self.selected_cells:
             if 0 <= row < self.rows and 0 <= col < self.cols:
                 old_char = chr(self.grid[row, col])
-                if old_char != char:
+                new_char = self.apply_extra_spaces_to_char(char)
+                if old_char != new_char:
                     undo_action.append((row, col, old_char))  # ✅ Store only changed cells
-                    self.grid[row, col] = ord(char)
+                    self.grid[row, col] = ord(new_char)
                     self.redraw_cell(row, col)
 
         if undo_action:
@@ -2157,22 +2264,18 @@ class TextGridEditor:
 
         return horiz, vert
 
-    def _flood_fill_border_blanks(self, blank_mask):
+    def _flood_fill_blank_component(self, blank_mask, seed_row, seed_col):
         rows, cols = blank_mask.shape
         connected = np.zeros_like(blank_mask, dtype=bool)
         queue = deque()
 
-        def seed(r, c):
-            if blank_mask[r, c] and not connected[r, c]:
-                connected[r, c] = True
-                queue.append((r, c))
+        if not (0 <= seed_row < rows and 0 <= seed_col < cols):
+            return connected
+        if not blank_mask[seed_row, seed_col]:
+            return connected
 
-        for col in range(cols):
-            seed(0, col)
-            seed(rows - 1, col)
-        for row in range(rows):
-            seed(row, 0)
-            seed(row, cols - 1)
+        connected[seed_row, seed_col] = True
+        queue.append((seed_row, seed_col))
 
         while queue:
             row, col = queue.popleft()
@@ -2205,105 +2308,33 @@ class TextGridEditor:
         ], dtype=self.grid.dtype)
         return np.isin(self.grid, blank_values)
 
-    def fill_ocean_blanks(self, water_char='W', min_run=5, adjacency_threshold=2):
+    def arm_smart_select(self, min_run=5, adjacency_threshold=2, min_region_size=18, replace_selection=True):
         if self.grid is None or self.rows == 0 or self.cols == 0:
             messagebox.showwarning("No Map", "Load a map first.")
             return
 
-        if water_char not in ('w', 'W', 'r', 'R'):
-            water_char = 'W'
-
-        min_run = max(1, int(min_run))
-        adjacency_threshold = max(1, min(8, int(adjacency_threshold)))
-
-        blank_mask = self._compute_blank_mask()
-        if not np.any(blank_mask):
-            self.debug_label.config(text="Ocean fill: no blank cells found.")
-            return
-
-        external_blank = self._flood_fill_border_blanks(blank_mask)
-        if not np.any(external_blank):
-            border_blank_count = (
-                np.count_nonzero(blank_mask[0, :]) +
-                np.count_nonzero(blank_mask[-1, :]) +
-                np.count_nonzero(blank_mask[:, 0]) +
-                np.count_nonzero(blank_mask[:, -1])
-            )
-            self.debug_label.config(
-                text=f"Ocean fill: no border-connected blanks. blank={int(np.count_nonzero(blank_mask))}, border_blank={int(border_blank_count)}"
-            )
-            print(
-                f"Ocean fill border flood failed: blanks={int(np.count_nonzero(blank_mask))}, border_blank={int(border_blank_count)}"
-            )
-            return
-
-        horiz_runs, vert_runs = self._compute_blank_run_lengths(external_blank)
-        run_ok = (horiz_runs >= min_run) | (vert_runs >= min_run)
-
-        water_mask = (
-            (self.grid == ord('w')) |
-            (self.grid == ord('W')) |
-            (self.grid == ord('r')) |
-            (self.grid == ord('R'))
-        )
-        water_neighbors = self._count_neighbors(water_mask, include_diagonal=True)
-
-        fill_mask = external_blank & ((water_neighbors >= 1) | run_ok)
-
-        border_mask = np.zeros_like(external_blank, dtype=bool)
-        border_mask[0, :] = True
-        border_mask[-1, :] = True
-        border_mask[:, 0] = True
-        border_mask[:, -1] = True
-        fill_mask |= external_blank & border_mask
-
-        max_iterations = max(self.rows, self.cols)
-        for _ in range(max_iterations):
-            neighbor_count = self._count_neighbors(fill_mask | water_mask, include_diagonal=True)
-            new_fill = external_blank & (~fill_mask) & (run_ok | (neighbor_count >= adjacency_threshold))
-            if not np.any(new_fill):
-                break
-            fill_mask |= new_fill
-
-        changed_mask = fill_mask & (self.grid != ord(water_char))
-        changed_cells = np.argwhere(changed_mask)
-        if changed_cells.size == 0:
-            self.debug_label.config(text="Ocean fill: no eligible blanks matched the rules.")
-            return
-
-        undo_action = []
-        for row, col in changed_cells:
-            undo_action.append((int(row), int(col), chr(self.grid[row, col])))
-
-        self.grid[changed_mask] = ord(water_char)
-
-        self.undo_stack.append(undo_action)
-        if len(self.undo_stack) > self.max_undo:
-            self.undo_stack.pop(0)
-
-        self._redraw_visible_cells()
-        self.update_selection()
-
+        self.smart_select_pending = {
+            "min_run": max(1, int(min_run)),
+            "adjacency_threshold": max(1, min(8, int(adjacency_threshold))),
+            "min_region_size": max(1, int(min_region_size)),
+            "replace_selection": bool(replace_selection),
+        }
         self.debug_label.config(
             text=(
-                f"Ocean fill complete: {len(changed_cells)} cells -> '{water_char}' "
-                f"(min run {min_run}, adjacency {adjacency_threshold})"
+                f"Smart Select armed: click a blank cell "
+                f"(run>={self.smart_select_pending['min_run']}, adjacency>={self.smart_select_pending['adjacency_threshold']})"
             )
         )
-        print(
-            f"Ocean fill complete. changed={len(changed_cells)}, "
-            f"water='{water_char}', min_run={min_run}, adjacency={adjacency_threshold}"
-        )
 
-    def fill_ocean_blanks_custom(self):
+    def arm_smart_select_custom(self):
         if self.grid is None:
             messagebox.showwarning("No Map", "Load a map first.")
             return
 
         default_max = max(10, self.rows, self.cols)
         min_run = simpledialog.askinteger(
-            "Ocean Fill",
-            "Minimum blank run length (seed rule):",
+            "Smart Select",
+            "Minimum blank run length:",
             initialvalue=5,
             minvalue=1,
             maxvalue=default_max
@@ -2312,7 +2343,7 @@ class TextGridEditor:
             return
 
         adjacency_threshold = simpledialog.askinteger(
-            "Ocean Fill",
+            "Smart Select",
             "Adjacency threshold (1-8):",
             initialvalue=2,
             minvalue=1,
@@ -2321,23 +2352,132 @@ class TextGridEditor:
         if adjacency_threshold is None:
             return
 
-        water_char_input = simpledialog.askstring(
-            "Ocean Fill",
-            "Water character ('w', 'W', 'r', or 'R'):",
-            initialvalue='W'
+        min_region_size = simpledialog.askinteger(
+            "Smart Select",
+            "Minimum selected cells:",
+            initialvalue=18,
+            minvalue=1,
+            maxvalue=max(1, self.rows * self.cols)
         )
-        if not water_char_input:
+        if min_region_size is None:
             return
 
-        water_char = water_char_input[0]
-        if water_char not in ('w', 'W', 'r', 'R'):
-            messagebox.showwarning("Invalid Water Char", "Only 'w', 'W', 'r', or 'R' is supported. Using 'W'.")
-            water_char = 'W'
+        replace_selection = messagebox.askyesno(
+            "Smart Select",
+            "Replace current selection?\nChoose No to add to existing selection."
+        )
 
-        self.fill_ocean_blanks(
-            water_char=water_char,
+        self.arm_smart_select(
             min_run=min_run,
-            adjacency_threshold=adjacency_threshold
+            adjacency_threshold=adjacency_threshold,
+            min_region_size=min_region_size,
+            replace_selection=replace_selection,
+        )
+
+    def _compute_smart_select_mask(self, seed_row, seed_col, min_run, adjacency_threshold):
+        blank_mask = self._compute_blank_mask()
+        if blank_mask is None:
+            return None, "No grid loaded."
+        if not blank_mask[seed_row, seed_col]:
+            return None, "Smart Select only starts on blank cells."
+
+        component = self._flood_fill_blank_component(blank_mask, seed_row, seed_col)
+        component_size = int(np.count_nonzero(component))
+        if component_size == 0:
+            return None, "No blank region found at click location."
+
+        horiz_runs, vert_runs = self._compute_blank_run_lengths(component)
+        run_ok = (
+            ((horiz_runs >= min_run) & (vert_runs >= 2)) |
+            ((vert_runs >= min_run) & (horiz_runs >= 2))
+        )
+        component_neighbors = self._count_neighbors(component, include_diagonal=True)
+        dense_mask = component_neighbors >= (adjacency_threshold + 1)
+        core_mask = component & (run_ok | dense_mask)
+
+        seed_is_core = bool(core_mask[seed_row, seed_col])
+        if not seed_is_core:
+            return None, "Clicked blank is too narrow for smart select."
+
+        fill_mask = np.zeros_like(component, dtype=bool)
+        fill_mask[seed_row, seed_col] = True
+
+        max_iterations = max(self.rows, self.cols)
+        for _ in range(max_iterations):
+            neighbor_count = self._count_neighbors(fill_mask, include_diagonal=True)
+            new_fill = (
+                core_mask &
+                (~fill_mask) &
+                (neighbor_count >= 1)
+            )
+            if not np.any(new_fill):
+                break
+            fill_mask |= new_fill
+
+        for _ in range(max_iterations):
+            neighbor_count = self._count_neighbors(fill_mask, include_diagonal=True)
+            new_fill = (
+                component &
+                (~fill_mask) &
+                (neighbor_count >= adjacency_threshold)
+            )
+            if not np.any(new_fill):
+                break
+            fill_mask |= new_fill
+
+        return fill_mask, None
+
+    def smart_select_at(self, row, col, min_run=5, adjacency_threshold=2, min_region_size=18, replace_selection=True):
+        if self.grid is None or self.rows == 0 or self.cols == 0:
+            messagebox.showwarning("No Map", "Load a map first.")
+            return
+
+        if not (0 <= row < self.rows and 0 <= col < self.cols):
+            self.debug_label.config(text="Smart Select: click inside the map bounds.")
+            return
+
+        min_run = max(1, int(min_run))
+        adjacency_threshold = max(1, min(8, int(adjacency_threshold)))
+        min_region_size = max(1, int(min_region_size))
+
+        fill_mask, error = self._compute_smart_select_mask(
+            seed_row=row,
+            seed_col=col,
+            min_run=min_run,
+            adjacency_threshold=adjacency_threshold,
+        )
+        if fill_mask is None:
+            self.debug_label.config(text=f"Smart Select: {error}")
+            print(f"Smart Select rejected at ({row}, {col}): {error}")
+            return
+
+        selected_count = int(np.count_nonzero(fill_mask))
+        if selected_count < min_region_size:
+            self.debug_label.config(
+                text=f"Smart Select canceled: region too small ({selected_count} < {min_region_size})."
+            )
+            print(
+                f"Smart Select canceled at ({row}, {col}): selected={selected_count}, min_required={min_region_size}"
+            )
+            return
+
+        selected_cells = {(int(r), int(c)) for r, c in np.argwhere(fill_mask)}
+        if replace_selection:
+            self.selected_cells = selected_cells
+        else:
+            self.selected_cells.update(selected_cells)
+
+        self.canvas.delete('selection')
+        self.update_selection()
+        self.debug_label.config(
+            text=(
+                f"Smart Select complete: {selected_count} blank cells selected "
+                f"(run>={min_run}, adjacency>={adjacency_threshold})."
+            )
+        )
+        print(
+            f"Smart Select complete at ({row}, {col}): selected={selected_count}, "
+            f"run>={min_run}, adjacency>={adjacency_threshold}, replace={replace_selection}"
         )
 
     def get_rectangular_selection(self):
@@ -2352,6 +2492,151 @@ class TextGridEditor:
     def on_randomness_change(self, value):
         # No additional processing needed as the value is directly stored in self.randomness
         pass
+
+    def on_extra_spaces_change(self, value):
+        # No additional processing needed as the value is directly stored in self.extra_spaces
+        pass
+
+    def apply_extra_spaces_to_char(self, char):
+        """Apply per-cell chance to convert inserted output into spaces."""
+        if char == ' ':
+            return char
+        chance = max(0.0, min(1.0, self.extra_spaces.get() / 100.0))
+        if chance <= 0.0:
+            return char
+        return ' ' if random.random() < chance else char
+
+    def _generate_dry_crack_mask(self, width, height, mode="random"):
+        """Create branching crack paths for dry terrain."""
+        crack_mask = np.zeros((height, width), dtype=bool)
+        area = width * height
+        if area <= 0:
+            return crack_mask
+
+        if mode in ("radiate", "converge"):
+            center_x = (width - 1) / 2.0
+            center_y = (height - 1) / 2.0
+            start_count = max(8, int(math.sqrt(area) * 0.65))
+            min_len = max(14, int(min(width, height) * 0.7))
+            max_len = max(min_len + 12, int((width + height) * 1.1))
+            max_carved = max(40, int(area * 0.2))
+            carved = 0
+
+            branches = []
+            for _ in range(start_count):
+                angle = random.uniform(0, 2 * math.pi)
+                if mode == "radiate":
+                    start_radius = random.uniform(0, max(2.0, min(width, height) * 0.12))
+                    x = center_x + math.cos(angle) * start_radius
+                    y = center_y + math.sin(angle) * start_radius
+                    heading = angle + random.uniform(-0.25, 0.25)
+                else:
+                    edge_radius = max(width, height)
+                    x = center_x + math.cos(angle) * edge_radius
+                    y = center_y + math.sin(angle) * edge_radius
+                    x = max(0.0, min(width - 1.0, x))
+                    y = max(0.0, min(height - 1.0, y))
+                    heading = math.atan2(center_y - y, center_x - x) + random.uniform(-0.22, 0.22)
+
+                length = random.randint(min_len, max_len)
+                branches.append([x, y, heading, length])
+
+            while branches and carved < max_carved:
+                x, y, heading, steps = branches.pop()
+                for _ in range(steps):
+                    ix = int(round(x))
+                    iy = int(round(y))
+                    if not (0 <= ix < width and 0 <= iy < height):
+                        break
+
+                    if not crack_mask[iy, ix]:
+                        crack_mask[iy, ix] = True
+                        carved += 1
+                        if carved >= max_carved:
+                            break
+
+                    if random.random() < 0.18:
+                        side_angle = heading + random.choice([math.pi / 2, -math.pi / 2])
+                        sx = int(round(x + math.cos(side_angle)))
+                        sy = int(round(y + math.sin(side_angle)))
+                        if 0 <= sx < width and 0 <= sy < height and not crack_mask[sy, sx]:
+                            crack_mask[sy, sx] = True
+                            carved += 1
+                            if carved >= max_carved:
+                                break
+
+                    if random.random() < 0.14 and steps > 10:
+                        branch_heading = heading + random.uniform(-0.8, 0.8)
+                        branch_len = max(8, (steps // 2) + random.randint(-3, 4))
+                        branches.append([x, y, branch_heading, branch_len])
+
+                    if mode == "radiate":
+                        target_heading = math.atan2(y - center_y, x - center_x)
+                    else:
+                        target_heading = math.atan2(center_y - y, center_x - x)
+                    heading = (0.78 * heading) + (0.22 * target_heading) + random.uniform(-0.12, 0.12)
+
+                    x += math.cos(heading)
+                    y += math.sin(heading)
+
+                    if random.random() < 0.14:
+                        x += random.uniform(-0.55, 0.55)
+                        y += random.uniform(-0.55, 0.55)
+
+            return crack_mask
+
+        start_count = max(3, int(area * 0.0035))
+        min_len = max(10, int(min(width, height) * 0.6))
+        max_len = max(min_len + 8, int((width + height) * 0.9))
+        directions = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+        branches = []
+        for _ in range(start_count):
+            x = random.randint(0, width - 1)
+            y = random.randint(0, height - 1)
+            dx, dy = random.choice(directions)
+            length = random.randint(min_len, max_len)
+            branches.append([x, y, dx, dy, length])
+
+        max_carved = max(30, int(area * 0.16))
+        carved = 0
+
+        while branches and carved < max_carved:
+            x, y, dx, dy, steps = branches.pop()
+            for _ in range(steps):
+                if not (0 <= x < width and 0 <= y < height):
+                    break
+
+                if not crack_mask[y, x]:
+                    crack_mask[y, x] = True
+                    carved += 1
+                    if carved >= max_carved:
+                        break
+
+                if random.random() < 0.18:
+                    sx, sy = x + dy, y + dx
+                    if 0 <= sx < width and 0 <= sy < height and not crack_mask[sy, sx]:
+                        crack_mask[sy, sx] = True
+                        carved += 1
+                        if carved >= max_carved:
+                            break
+
+                if random.random() < 0.16 and steps > 6:
+                    ndx, ndy = random.choice([(-dy, dx), (dy, -dx), (dx, dy)])
+                    next_len = max(6, (steps // 2) + random.randint(-3, 3))
+                    branches.append([x, y, ndx, ndy, next_len])
+
+                if random.random() < 0.25:
+                    dx, dy = random.choice([(dx, dy), (-dy, dx), (dy, -dx)])
+
+                x += dx
+                y += dy
+
+                if random.random() < 0.2:
+                    x += random.choice([-1, 0, 1])
+                    y += random.choice([-1, 0, 1])
+
+        return crack_mask
 
     def generate_biome(self, biome_type, shape_type):
         print(f"Generating biome: {biome_type}, Shape: {shape_type}")
@@ -2467,6 +2752,23 @@ class TextGridEditor:
                         base_char = '.'  # Default fallback for safety
                         adjacent_chars = ['.', 'f', 'F']
 
+                # **Grasslands Mapping**
+                elif biome_type == "grasslands":
+                    # Keep grasslands mostly '.' with some ',' and only occasional 'f',
+                    # independent of shape spikes (e.g. spotty often returns ~1.0).
+                    if mask_value < 0.68:
+                        base_char = '.'
+                        adjacent_chars = ['.', '.', '.', '.', ',', ',']
+                    else:
+                        base_char = ','
+                        adjacent_chars = ['.', '.', ',', ',', ',']
+
+                    # Very rare tree chance, slightly higher in denser mask zones.
+                    tree_chance = 0.012 + max(0.0, mask_value - 0.75) * 0.03
+                    if random.random() < min(0.04, tree_chance):
+                        base_char = 'f'
+                        adjacent_chars = ['.', ',', 'f']
+
                 # **Swamp Mapping**
                 elif biome_type == "swamp":
                     if mask_value < 0.2:
@@ -2497,6 +2799,20 @@ class TextGridEditor:
                         base_char = 'D'  # High plateaus
                         adjacent_chars = ['d', 'D']
 
+                # **Dry Sand Mapping**
+                elif biome_type == "dry_sand":
+                    if mask_value < 0.3:
+                        base_char = ' '
+                        adjacent_chars = [' ', '.', ',']
+                    elif mask_value < 0.6:
+                        base_char = '.'
+                        adjacent_chars = [' ', '.', ',']
+                    elif mask_value < 0.9:
+                        base_char = ','
+                        adjacent_chars = [' ', '.', ',', 'd']
+                    else:
+                        base_char = ' '
+                        adjacent_chars = [' ', '.', ',']
 
                 # **🔧 Prevent Undefined `base_char` Errors**
                 else:
@@ -2509,13 +2825,28 @@ class TextGridEditor:
                 else:
                     biome_map[y][x] = base_char
 
+        if biome_type == "dry_sand":
+            crack_mode = "random"
+            if shape_type == "explosion":
+                crack_mode = "radiate"
+            elif shape_type == "implosion":
+                crack_mode = "converge"
+
+            crack_mask = self._generate_dry_crack_mask(width, height, mode=crack_mode)
+            for y in range(height):
+                for x in range(width):
+                    if crack_mask[y, x]:
+                        biome_map[y][x] = 'd' if random.random() < 0.82 else 'D'
+                    elif biome_map[y][x] == ' ' and random.random() < (0.06 + randomness * 0.25):
+                        biome_map[y][x] = random.choice(['.', ','])
+
         # Apply biome changes to grid
         undo_action = []
         for i, row in enumerate(range(min_row, max_row + 1)):
             for j, col in enumerate(range(min_col, max_col + 1)):
                 if (row, col) in self.selected_cells:
                     old_char = chr(self.grid[row, col])
-                    new_char = biome_map[i][j]
+                    new_char = self.apply_extra_spaces_to_char(biome_map[i][j])
                     if old_char != new_char:
                         undo_action.append((row, col, old_char))  # 🔥 Store previous state
                         self.grid[row, col] = ord(new_char)
@@ -2682,6 +3013,11 @@ BIOME_PROFILES = {
         "probabilities": [70, 25, 5],  # Mostly grass, some trees, rare dense trees
         "shapes": ["crescent", "irregular", "patchy", "spotty", "explosion", "implosion"],
     },
+    "grasslands": {
+        "layers": [' ', '.', ',', 'f'],
+        "probabilities": [6, 80, 13, 1],  # Mostly '.', some ',', very rare 'f'
+        "shapes": ["crescent", "irregular", "patchy", "spotty", "explosion", "implosion"],
+    },
     "swamp": {
         "layers": ['.', 'w', 'W', '.'],  # Muddy land, shallow water, deep water, sparse trees
         "probabilities": [30, 40, 20, 10],  # Mostly shallow water, some deep water, scattered land
@@ -2691,6 +3027,11 @@ BIOME_PROFILES = {
         "layers": [',', 'z', 'd', 'D'],  # Light sand → Small dunes → Tall dunes → Sand plateaus
         "probabilities": [60, 20, 15, 5],  # Mostly light sand, fewer dunes
         "shapes": ["dune_horizontal", "dune_vertical", "patchy", "explosion", "implosion"],
+    },
+    "dry_sand": {
+        "layers": [' ', '.', ',', 'd', 'D'],
+        "probabilities": [45, 28, 19, 6, 2],  # Sparse dry ground with occasional darker crack chars
+        "shapes": ["patchy", "irregular", "spotty", "explosion", "implosion"],
     },
 }
 
