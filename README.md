@@ -27,16 +27,19 @@ python map_editor5.py
 
 ### 1. Smart Select (replaces Ocean Fill)
 
-`Smart Select` is now used to capture large blank regions safely.
+`Smart Select` now has two distinct selection families and always appends to your current selection.
 
-- Works by arming selection from the `Smart Select` menu, then clicking a blank cell
-- Expands through contiguous blank areas using run/adjacency rules
-- Helps avoid accidental spillover into narrow or isolated gaps
-- Supports presets and `Custom...` options:
-  - minimum run length
-  - adjacency threshold
-  - minimum region size
-  - replace selection vs add to current selection
+- `Region Flood`:
+  - Starts from a clicked blank cell
+  - Expands through contiguous blank regions using run/adjacency rules
+  - Includes balanced/strict presets and custom tuning (`min run`, `adjacency`, `min region size`)
+- `Path Corona (Blank)`:
+  - Starts from a clicked blank cell touching filled terrain
+  - Traces boundary path using 8-direction movement with corner-wrap prevention
+  - Selects blank cells only
+  - Radius expansion is constrained to the boundary-adjacent blank path space, so it does not spill into unrelated shapes
+
+All Smart Select actions append (additive selection); they do not replace existing selected cells.
 
 ### 2. Extra Spaces Slider
 

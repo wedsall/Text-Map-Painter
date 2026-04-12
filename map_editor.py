@@ -383,14 +383,44 @@ class TextGridEditor:
         smart_select_btn.pack(side=tk.LEFT, padx=5)
         smart_select_menu = tk.Menu(smart_select_btn, tearoff=0)
         smart_select_menu.add_command(
-            label="Blank Region (run >= 5, adjacency 2)",
-            command=lambda: self.arm_smart_select(min_run=5, adjacency_threshold=2, min_region_size=18, replace_selection=True)
+            label="Region Flood: Balanced (run >= 5, adjacency 2)",
+            command=lambda: self.arm_smart_select(
+                mode="region_flood",
+                min_run=5,
+                adjacency_threshold=2,
+                min_region_size=18,
+                replace_selection=False
+            )
         )
         smart_select_menu.add_command(
-            label="Blank Region (run >= 8, adjacency 3)",
-            command=lambda: self.arm_smart_select(min_run=8, adjacency_threshold=3, min_region_size=28, replace_selection=True)
+            label="Region Flood: Strict (run >= 8, adjacency 3)",
+            command=lambda: self.arm_smart_select(
+                mode="region_flood",
+                min_run=8,
+                adjacency_threshold=3,
+                min_region_size=28,
+                replace_selection=False
+            )
         )
-        smart_select_menu.add_command(label="Custom...", command=self.arm_smart_select_custom)
+        smart_select_menu.add_command(label="Region Flood: Custom...", command=self.arm_smart_select_custom)
+        smart_select_menu.add_separator()
+        smart_select_menu.add_command(
+            label="Path Corona: Blank (radius 1)",
+            command=lambda: self.arm_smart_select(
+                mode="path_corona",
+                corona_radius=1,
+                replace_selection=False
+            )
+        )
+        smart_select_menu.add_command(
+            label="Path Corona: Blank (radius 3)",
+            command=lambda: self.arm_smart_select(
+                mode="path_corona",
+                corona_radius=3,
+                replace_selection=False
+            )
+        )
+        smart_select_menu.add_command(label="Path Corona: Custom...", command=self.arm_smart_select_path_custom)
         smart_select_btn["menu"] = smart_select_menu
 
     def setup_zoom_slider(self):
@@ -1286,10 +1316,7 @@ class TextGridEditor:
             self.smart_select_at(
                 row=row,
                 col=col,
-                min_run=settings["min_run"],
-                adjacency_threshold=settings["adjacency_threshold"],
-                min_region_size=settings["min_region_size"],
-                replace_selection=settings["replace_selection"],
+                **settings,
             )
             return
 
@@ -2264,15 +2291,19 @@ class TextGridEditor:
 
         return horiz, vert
 
-    def _flood_fill_blank_component(self, blank_mask, seed_row, seed_col):
-        rows, cols = blank_mask.shape
-        connected = np.zeros_like(blank_mask, dtype=bool)
+    def _flood_fill_component_mask(self, mask, seed_row, seed_col, include_diagonal=False):
+        rows, cols = mask.shape
+        connected = np.zeros_like(mask, dtype=bool)
         queue = deque()
 
         if not (0 <= seed_row < rows and 0 <= seed_col < cols):
             return connected
-        if not blank_mask[seed_row, seed_col]:
+        if not mask[seed_row, seed_col]:
             return connected
+
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        if include_diagonal:
+            directions.extend([(-1, -1), (-1, 1), (1, -1), (1, 1)])
 
         connected[seed_row, seed_col] = True
         queue.append((seed_row, seed_col))
@@ -2280,20 +2311,97 @@ class TextGridEditor:
         while queue:
             row, col = queue.popleft()
 
-            if row > 0 and blank_mask[row - 1, col] and not connected[row - 1, col]:
-                connected[row - 1, col] = True
-                queue.append((row - 1, col))
-            if row < rows - 1 and blank_mask[row + 1, col] and not connected[row + 1, col]:
-                connected[row + 1, col] = True
-                queue.append((row + 1, col))
-            if col > 0 and blank_mask[row, col - 1] and not connected[row, col - 1]:
-                connected[row, col - 1] = True
-                queue.append((row, col - 1))
-            if col < cols - 1 and blank_mask[row, col + 1] and not connected[row, col + 1]:
-                connected[row, col + 1] = True
-                queue.append((row, col + 1))
+            for d_row, d_col in directions:
+                next_row = row + d_row
+                next_col = col + d_col
+                if (
+                    0 <= next_row < rows and
+                    0 <= next_col < cols and
+                    mask[next_row, next_col] and
+                    not connected[next_row, next_col]
+                ):
+                    connected[next_row, next_col] = True
+                    queue.append((next_row, next_col))
 
         return connected
+
+    def _flood_fill_blank_component(self, blank_mask, seed_row, seed_col):
+        return self._flood_fill_component_mask(blank_mask, seed_row, seed_col, include_diagonal=False)
+
+    def _flood_fill_touching_blank_path(self, touching_blank, filled_mask, seed_row, seed_col):
+        """Flood blank boundary path with diagonal support and corner-wrap prevention."""
+        rows, cols = touching_blank.shape
+        connected = np.zeros_like(touching_blank, dtype=bool)
+        queue = deque()
+
+        if not (0 <= seed_row < rows and 0 <= seed_col < cols):
+            return connected
+        if not touching_blank[seed_row, seed_col]:
+            return connected
+
+        directions = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (-1, 1), (1, -1), (1, 1),
+        ]
+
+        connected[seed_row, seed_col] = True
+        queue.append((seed_row, seed_col))
+
+        while queue:
+            row, col = queue.popleft()
+
+            for d_row, d_col in directions:
+                next_row = row + d_row
+                next_col = col + d_col
+                if not (0 <= next_row < rows and 0 <= next_col < cols):
+                    continue
+                if not touching_blank[next_row, next_col] or connected[next_row, next_col]:
+                    continue
+
+                # Diagonal allowed, but do not cut around a filled corner.
+                if d_row != 0 and d_col != 0:
+                    side_a = filled_mask[row, next_col]
+                    side_b = filled_mask[next_row, col]
+                    if side_a and side_b:
+                        continue
+
+                connected[next_row, next_col] = True
+                queue.append((next_row, next_col))
+
+        return connected
+
+    def _expand_blank_layer_with_corner_guard(self, frontier_mask, allowed_blank_mask, filled_mask, selected_mask):
+        """Expand one layer in blank space while preventing diagonal corner-wrap."""
+        rows, cols = allowed_blank_mask.shape
+        new_layer = np.zeros_like(allowed_blank_mask, dtype=bool)
+
+        directions = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (-1, 1), (1, -1), (1, 1),
+        ]
+
+        for row, col in np.argwhere(frontier_mask):
+            row = int(row)
+            col = int(col)
+            for d_row, d_col in directions:
+                next_row = row + d_row
+                next_col = col + d_col
+                if not (0 <= next_row < rows and 0 <= next_col < cols):
+                    continue
+                if selected_mask[next_row, next_col]:
+                    continue
+                if not allowed_blank_mask[next_row, next_col]:
+                    continue
+
+                if d_row != 0 and d_col != 0:
+                    side_a = filled_mask[row, next_col]
+                    side_b = filled_mask[next_row, col]
+                    if side_a and side_b:
+                        continue
+
+                new_layer[next_row, next_col] = True
+
+        return new_layer
 
     def _compute_blank_mask(self):
         """Treat common whitespace and zero-value cells as blank."""
@@ -2308,21 +2416,49 @@ class TextGridEditor:
         ], dtype=self.grid.dtype)
         return np.isin(self.grid, blank_values)
 
-    def arm_smart_select(self, min_run=5, adjacency_threshold=2, min_region_size=18, replace_selection=True):
+    def arm_smart_select(
+        self,
+        mode="region_flood",
+        min_run=5,
+        adjacency_threshold=2,
+        min_region_size=18,
+        corona_radius=1,
+        replace_selection=False
+    ):
         if self.grid is None or self.rows == 0 or self.cols == 0:
             messagebox.showwarning("No Map", "Load a map first.")
             return
 
+        mode = (mode or "region_flood").lower()
+
+        if mode == "path_corona":
+            self.smart_select_pending = {
+                "mode": "path_corona",
+                "corona_radius": max(1, int(corona_radius)),
+                "replace_selection": False,
+            }
+            self.debug_label.config(
+                text=(
+                    "Smart Select armed: Path Corona Blank "
+                    f"(radius {self.smart_select_pending['corona_radius']}). "
+                    "Click a blank cell touching filled terrain. (adds to selection)"
+                )
+            )
+            return
+
         self.smart_select_pending = {
+            "mode": "region_flood",
             "min_run": max(1, int(min_run)),
             "adjacency_threshold": max(1, min(8, int(adjacency_threshold))),
             "min_region_size": max(1, int(min_region_size)),
-            "replace_selection": bool(replace_selection),
+            "replace_selection": False,
         }
         self.debug_label.config(
             text=(
-                f"Smart Select armed: click a blank cell "
-                f"(run>={self.smart_select_pending['min_run']}, adjacency>={self.smart_select_pending['adjacency_threshold']})"
+                "Smart Select armed: Region Flood. "
+                f"Click a blank cell (run>={self.smart_select_pending['min_run']}, "
+                f"adjacency>={self.smart_select_pending['adjacency_threshold']}). "
+                "(adds to selection)"
             )
         )
 
@@ -2362,16 +2498,34 @@ class TextGridEditor:
         if min_region_size is None:
             return
 
-        replace_selection = messagebox.askyesno(
-            "Smart Select",
-            "Replace current selection?\nChoose No to add to existing selection."
-        )
-
         self.arm_smart_select(
+            mode="region_flood",
             min_run=min_run,
             adjacency_threshold=adjacency_threshold,
             min_region_size=min_region_size,
-            replace_selection=replace_selection,
+            replace_selection=False,
+        )
+
+    def arm_smart_select_path_custom(self):
+        if self.grid is None:
+            messagebox.showwarning("No Map", "Load a map first.")
+            return
+
+        max_radius = max(1, max(self.rows, self.cols))
+        corona_radius = simpledialog.askinteger(
+            "Path Corona",
+            "Blank corona radius (cells):",
+            initialvalue=1,
+            minvalue=1,
+            maxvalue=max_radius
+        )
+        if corona_radius is None:
+            return
+
+        self.arm_smart_select(
+            mode="path_corona",
+            corona_radius=corona_radius,
+            replace_selection=False,
         )
 
     def _compute_smart_select_mask(self, seed_row, seed_col, min_run, adjacency_threshold):
@@ -2427,7 +2581,95 @@ class TextGridEditor:
 
         return fill_mask, None
 
-    def smart_select_at(self, row, col, min_run=5, adjacency_threshold=2, min_region_size=18, replace_selection=True):
+    def _compute_path_corona_mask(self, seed_row, seed_col, corona_radius=1):
+        blank_mask = self._compute_blank_mask()
+        if blank_mask is None:
+            return None, "No grid loaded."
+        if not blank_mask[seed_row, seed_col]:
+            return None, "Path Corona starts on a blank cell."
+
+        filled_mask = ~blank_mask
+        rows, cols = blank_mask.shape
+        adjacent_filled = []
+        for d_row in (-1, 0, 1):
+            for d_col in (-1, 0, 1):
+                if d_row == 0 and d_col == 0:
+                    continue
+                next_row = seed_row + d_row
+                next_col = seed_col + d_col
+                if (
+                    0 <= next_row < rows and
+                    0 <= next_col < cols and
+                    filled_mask[next_row, next_col]
+                ):
+                    adjacent_filled.append((next_row, next_col))
+
+        if not adjacent_filled:
+            return None, "Clicked blank must touch a filled cell."
+
+        # Anchor to contiguous filled component(s) that touch the clicked blank.
+        target_filled = np.zeros_like(filled_mask, dtype=bool)
+        for f_row, f_col in adjacent_filled:
+            if target_filled[f_row, f_col]:
+                continue
+            target_filled |= self._flood_fill_component_mask(
+                filled_mask,
+                f_row,
+                f_col,
+                include_diagonal=True
+            )
+
+        target_neighbors = self._count_neighbors(target_filled, include_diagonal=True)
+        target_boundary_blank = blank_mask & (target_neighbors >= 1)
+        if not target_boundary_blank[seed_row, seed_col]:
+            return None, "Clicked blank is not on the target component boundary."
+
+        boundary_path = self._flood_fill_touching_blank_path(
+            target_boundary_blank,
+            filled_mask,
+            seed_row,
+            seed_col,
+        )
+        if not np.any(boundary_path):
+            return None, "No path corona cells found at click location."
+
+        corona_radius = max(1, int(corona_radius))
+        selection_mask = boundary_path.copy()
+        frontier_mask = boundary_path.copy()
+
+        non_target_filled = filled_mask & (~target_filled)
+        if np.any(non_target_filled):
+            near_non_target = self._count_neighbors(non_target_filled, include_diagonal=True) >= 1
+            allowed_blank = blank_mask & (~near_non_target)
+            allowed_blank |= boundary_path  # Always keep the explicitly traced boundary path.
+        else:
+            allowed_blank = blank_mask
+
+        for _ in range(corona_radius - 1):
+            new_layer = self._expand_blank_layer_with_corner_guard(
+                frontier_mask=frontier_mask,
+                allowed_blank_mask=allowed_blank,
+                filled_mask=filled_mask,
+                selected_mask=selection_mask,
+            )
+            if not np.any(new_layer):
+                break
+            selection_mask |= new_layer
+            frontier_mask = new_layer
+
+        return selection_mask, None
+
+    def smart_select_at(
+        self,
+        row,
+        col,
+        mode="region_flood",
+        min_run=5,
+        adjacency_threshold=2,
+        min_region_size=18,
+        corona_radius=1,
+        replace_selection=False
+    ):
         if self.grid is None or self.rows == 0 or self.cols == 0:
             messagebox.showwarning("No Map", "Load a map first.")
             return
@@ -2436,23 +2678,32 @@ class TextGridEditor:
             self.debug_label.config(text="Smart Select: click inside the map bounds.")
             return
 
+        mode = (mode or "region_flood").lower()
         min_run = max(1, int(min_run))
         adjacency_threshold = max(1, min(8, int(adjacency_threshold)))
         min_region_size = max(1, int(min_region_size))
+        corona_radius = max(1, int(corona_radius))
 
-        fill_mask, error = self._compute_smart_select_mask(
-            seed_row=row,
-            seed_col=col,
-            min_run=min_run,
-            adjacency_threshold=adjacency_threshold,
-        )
+        if mode == "path_corona":
+            fill_mask, error = self._compute_path_corona_mask(
+                seed_row=row,
+                seed_col=col,
+                corona_radius=corona_radius,
+            )
+        else:
+            fill_mask, error = self._compute_smart_select_mask(
+                seed_row=row,
+                seed_col=col,
+                min_run=min_run,
+                adjacency_threshold=adjacency_threshold,
+            )
         if fill_mask is None:
             self.debug_label.config(text=f"Smart Select: {error}")
             print(f"Smart Select rejected at ({row}, {col}): {error}")
             return
 
         selected_count = int(np.count_nonzero(fill_mask))
-        if selected_count < min_region_size:
+        if mode == "region_flood" and selected_count < min_region_size:
             self.debug_label.config(
                 text=f"Smart Select canceled: region too small ({selected_count} < {min_region_size})."
             )
@@ -2462,23 +2713,32 @@ class TextGridEditor:
             return
 
         selected_cells = {(int(r), int(c)) for r, c in np.argwhere(fill_mask)}
-        if replace_selection:
-            self.selected_cells = selected_cells
-        else:
-            self.selected_cells.update(selected_cells)
+        self.selected_cells.update(selected_cells)
 
         self.canvas.delete('selection')
         self.update_selection()
-        self.debug_label.config(
-            text=(
-                f"Smart Select complete: {selected_count} blank cells selected "
-                f"(run>={min_run}, adjacency>={adjacency_threshold})."
+        if mode == "path_corona":
+            self.debug_label.config(
+                text=(
+                    "Smart Select Path Corona complete: "
+                    f"{selected_count} blank cells (radius {corona_radius})."
+                )
             )
-        )
-        print(
-            f"Smart Select complete at ({row}, {col}): selected={selected_count}, "
-            f"run>={min_run}, adjacency>={adjacency_threshold}, replace={replace_selection}"
-        )
+            print(
+                f"Smart Select Path Corona complete at ({row}, {col}): selected={selected_count}, "
+                f"radius={corona_radius}, blank_only=True, append=True"
+            )
+        else:
+            self.debug_label.config(
+                text=(
+                    f"Smart Select Region Flood complete: {selected_count} blank cells selected "
+                    f"(run>={min_run}, adjacency>={adjacency_threshold})."
+                )
+            )
+            print(
+                f"Smart Select Region Flood complete at ({row}, {col}): selected={selected_count}, "
+                f"run>={min_run}, adjacency>={adjacency_threshold}, append=True"
+            )
 
     def get_rectangular_selection(self):
         if not (self.rect_start and self.rect_end):
