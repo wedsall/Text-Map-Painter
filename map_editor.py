@@ -454,6 +454,14 @@ class TextGridEditor:
         )
         smart_select_btn["menu"] = smart_select_menu
 
+        custom_fill_btn = ttk.Button(
+            bottom_frame,
+            text="Custom Fill",
+            command=self.open_custom_fill_dialog,
+            takefocus=False
+        )
+        custom_fill_btn.pack(side=tk.LEFT, padx=5)
+
     def setup_zoom_slider(self):
         zoom_frame = ttk.Frame(self.root)
         zoom_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
@@ -1749,7 +1757,8 @@ class TextGridEditor:
         for row, col in self.selected_cells:
             if 0 <= row < self.rows and 0 <= col < self.cols:
                 old_char = chr(self.grid[row, col])
-                new_char = self.apply_extra_spaces_to_char(char)
+                # Key-fill should use the exact typed character.
+                new_char = char
                 if old_char != new_char:
                     undo_action.append((row, col, old_char))
                     self.grid[row, col] = ord(new_char)  # Direct fast update
@@ -1836,7 +1845,7 @@ class TextGridEditor:
         for row, col in self.selected_cells:
             if 0 <= row < self.rows and 0 <= col < self.cols:
                 old_char = chr(self.grid[row, col])
-                new_char = self.apply_extra_spaces_to_char(char)
+                new_char = char
                 if old_char != new_char:
                     undo_action.append((row, col, old_char))
                     updates.append((row, col, ord(new_char)))
@@ -1873,7 +1882,7 @@ class TextGridEditor:
         for row, col in self.selected_cells:
             if 0 <= row < self.rows and 0 <= col < self.cols:
                 old_char = chr(self.grid[row, col])
-                new_char = self.apply_extra_spaces_to_char(char)
+                new_char = char
                 if old_char != new_char:
                     undo_action.append((row, col, old_char))
                     self.grid[row, col] = ord(new_char)  # Direct grid update
@@ -2299,6 +2308,93 @@ class TextGridEditor:
                 self.undo_stack.pop(0)  # âœ… Limit stack size to prevent memory issues
 
         self.update_selection()
+
+    def open_custom_fill_dialog(self):
+        """Prompt for a character distribution string and random-fill selection."""
+        try:
+            if self.grid is None or self.rows == 0 or self.cols == 0:
+                messagebox.showwarning("No Map", "Load a map first.")
+                return
+
+            if not self.selected_cells:
+                messagebox.showwarning("No Selection", "Please select an area first.")
+                return
+
+            raw_value = simpledialog.askstring(
+                "Custom Fill",
+                "Enter up to 20 characters.\n"
+                "Trailing spaces are ignored.\n"
+                "Leading spaces are kept and used in distribution.",
+                initialvalue=""
+            )
+            if raw_value is None:
+                return
+
+            # Limit to the first 20 typed characters.
+            limited_value = raw_value[:20]
+            # Ignore trailing spaces only; keep leading/internal spaces.
+            distribution = limited_value.rstrip(' ')
+            if not distribution:
+                messagebox.showwarning(
+                    "Custom Fill",
+                    "No usable characters provided.\n"
+                    "Trailing spaces are ignored, so enter at least one non-trailing character."
+                )
+                return
+
+            self.apply_custom_fill(distribution)
+        finally:
+            # Return keyboard focus to the canvas so spacebar works for painting/typing.
+            try:
+                self.canvas.focus_set()
+            except Exception:
+                pass
+
+    def apply_custom_fill(self, distribution):
+        """Apply random character fill over selected cells from the given distribution string."""
+        if self.grid is None or not self.selected_cells:
+            return
+
+        char_pool = tuple(distribution)
+        choice = random.choice
+        undo_action = []
+        visible_changes = []
+
+        for row, col in self.selected_cells:
+            if 0 <= row < self.rows and 0 <= col < self.cols:
+                old_char = chr(self.grid[row, col])
+                new_char = choice(char_pool)
+                if old_char != new_char:
+                    undo_action.append((row, col, old_char))
+                    self.grid[row, col] = ord(new_char)
+                    if (row, col) in self.previous_visible_range:
+                        visible_changes.append((row, col))
+
+        if undo_action:
+            self.undo_stack.append(undo_action)
+            if len(self.undo_stack) > self.max_undo:
+                self.undo_stack.pop(0)
+
+        if visible_changes:
+            if len(visible_changes) > 2000:
+                self._redraw_visible_cells_force_complete()
+            else:
+                for row, col in visible_changes:
+                    char = chr(self.grid[row, col])
+                    color = self.get_char_color(char)
+                    self.update_canvas_object(row, col, char, color)
+
+        self.update_selection()
+        self.debug_label.config(
+            text=(
+                f"Custom Fill complete: {len(undo_action)} cells changed "
+                f"using {len(char_pool)} distribution chars."
+            )
+        )
+        print(
+            f"Custom Fill complete: changed={len(undo_action)}, "
+            f"selected={len(self.selected_cells)}, distribution='{distribution}'"
+        )
 
     def _count_neighbors(self, mask, include_diagonal=True):
         padded = np.pad(mask.astype(np.uint8), 1, mode='constant')
