@@ -1,4 +1,4 @@
-import tkinter as tk
+﻿import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import numpy as np
 import math
@@ -51,7 +51,7 @@ class TextGridEditor:
             'F': 'dark green',     # Dense Trees
             'x': 'dark red',       # Special Feature
 
-            # **✅ Sand Biome Colors**
+            # **âœ… Sand Biome Colors**
             ',': 'goldenrod',          # Light sand
             '`': 'goldenrod',          # Wind-blown light sand
             'z': 'goldenrod',      # Small dunes
@@ -80,6 +80,7 @@ class TextGridEditor:
         self.canvas_objects = {}
         self.redraw_after_id = None
         self.resize_after_id = None
+        self.scroll_refresh_after_id = None
 
         self.forest_shape = "ellipse"  # Default shape
         self.explosion_percentages = [10, 20, 30, 30, 10]  # ['.', '.', 'f', 'F', '.']
@@ -372,7 +373,7 @@ class TextGridEditor:
             menu = tk.Menu(menu_btn, tearoff=0)
 
             for shape in BIOME_PROFILES[biome_type]["shapes"]:
-                menu.add_command(label=f"{shape.title()}", 
+                menu.add_command(label=f"{shape.replace('_', ' ').title()}", 
                                 command=lambda b=biome_type, s=shape: self.generate_biome(b, s))
             menu.add_command(label="Thin Out", command=lambda: self.thin_out_forest("thin"))
             menu.add_command(label="Heavy Thin Out", command=lambda: self.thin_out_forest("heavy"))
@@ -420,7 +421,37 @@ class TextGridEditor:
                 replace_selection=False
             )
         )
+        smart_select_menu.add_command(
+            label="Path Corona: Blank + Adjacent Filled (radius 1)",
+            command=lambda: self.arm_smart_select(
+                mode="path_corona",
+                corona_radius=1,
+                include_adjacent_filled=True,
+                replace_selection=False
+            )
+        )
         smart_select_menu.add_command(label="Path Corona: Custom...", command=self.arm_smart_select_path_custom)
+        smart_select_menu.add_separator()
+        smart_select_menu.add_command(
+            label="Similar Type Radius: 3",
+            command=lambda: self.arm_smart_select(
+                mode="type_radius",
+                type_radius=3,
+                replace_selection=False
+            )
+        )
+        smart_select_menu.add_command(
+            label="Similar Type Radius: 6",
+            command=lambda: self.arm_smart_select(
+                mode="type_radius",
+                type_radius=6,
+                replace_selection=False
+            )
+        )
+        smart_select_menu.add_command(
+            label="Similar Type Radius: Custom...",
+            command=self.arm_smart_select_type_radius_custom
+        )
         smart_select_btn["menu"] = smart_select_menu
 
     def setup_zoom_slider(self):
@@ -477,21 +508,21 @@ class TextGridEditor:
 
     def on_mouse_motion(self, event):
         """Fixed hover preview with canvas boundary checking."""
-        # **✅ GET CANVAS BOUNDARIES**
+        # **âœ… GET CANVAS BOUNDARIES**
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
         
-        # **✅ CHECK IF MOUSE IS OUTSIDE CANVAS AREA**
+        # **âœ… CHECK IF MOUSE IS OUTSIDE CANVAS AREA**
         if (event.x < 0 or event.x >= canvas_width or 
             event.y < 0 or event.y >= canvas_height):
-            # **✅ CLEAR HOVER PREVIEW WHEN OUTSIDE CANVAS**
+            # **âœ… CLEAR HOVER PREVIEW WHEN OUTSIDE CANVAS**
             self.canvas.delete('hover_preview')
             return  # Don't show hover outside canvas
 
         col = int(self.canvas.canvasx(event.x) // self.cell_width)
         row = int(self.canvas.canvasy(event.y) // self.cell_height)
 
-        # **✅ ADDITIONAL GRID BOUNDARY CHECK**
+        # **âœ… ADDITIONAL GRID BOUNDARY CHECK**
         if (row < 0 or row >= self.rows or col < 0 or col >= self.cols):
             self.canvas.delete('hover_preview')
             return  # Don't show hover outside grid
@@ -503,40 +534,40 @@ class TextGridEditor:
         
         self._last_hover = current_hover
         
-        # **✅ ALWAYS DELETE PREVIOUS HOVER PREVIEW FIRST**
+        # **âœ… ALWAYS DELETE PREVIOUS HOVER PREVIEW FIRST**
         self.canvas.delete('hover_preview')
         
-        # **✅ CHECK SPACE-ONLY MODE**
+        # **âœ… CHECK SPACE-ONLY MODE**
         if not hasattr(self, 'select_spaces_only'):
             self.select_spaces_only = False
 
-        # **✅ ONLY CREATE HOVER PREVIEW FOR VALID CELLS**
+        # **âœ… ONLY CREATE HOVER PREVIEW FOR VALID CELLS**
         for d_row in range(self.paintbrush_size):
             for d_col in range(self.paintbrush_size):
-                # **✅ CORRECT COORDINATE CALCULATION**
+                # **âœ… CORRECT COORDINATE CALCULATION**
                 target_row = row + d_row
                 target_col = col + d_col
                 
-                # **✅ STRICT BOUNDARY CHECK FOR HOVER PREVIEW**
+                # **âœ… STRICT BOUNDARY CHECK FOR HOVER PREVIEW**
                 if not (0 <= target_row < self.rows and 0 <= target_col < self.cols):
                     continue  # Skip cells outside grid
                     
-                # **✅ SPACE-ONLY MODE CHECK FOR HOVER**
+                # **âœ… SPACE-ONLY MODE CHECK FOR HOVER**
                 if self.select_spaces_only:
                     current_char = chr(self.grid[target_row, target_col])
                     if not current_char.isspace() and current_char != ' ':
                         continue  # Skip non-space characters in hover too
                 
-                # **✅ CORRECT VISUAL COORDINATE CALCULATION**
+                # **âœ… CORRECT VISUAL COORDINATE CALCULATION**
                 x1 = target_col * self.cell_width
                 y1 = target_row * self.cell_height
                 x2 = x1 + self.cell_width
                 y2 = y1 + self.cell_height
                 
-                # **✅ VALIDATE PIXEL COORDINATES ARE WITHIN CANVAS**
+                # **âœ… VALIDATE PIXEL COORDINATES ARE WITHIN CANVAS**
                 if (x1 >= 0 and y1 >= 0 and x2 > x1 and y2 > y1 and
                     x1 < self.cols * self.cell_width and y1 < self.rows * self.cell_height):
-                    # **✅ DIFFERENT HOVER COLOR FOR SPACE-ONLY MODE**
+                    # **âœ… DIFFERENT HOVER COLOR FOR SPACE-ONLY MODE**
                     hover_color = 'yellow' if self.select_spaces_only else 'light cyan'
                     self.canvas.create_rectangle(x1, y1, x2, y2, outline=hover_color, 
                                             tags='hover_preview', width=1)
@@ -569,16 +600,16 @@ class TextGridEditor:
     def clear_selection(self, event=None):
         """Simple clear selection with performance mode handling."""
         selection_size = len(self.selected_cells)
-        print(f"🔄 CLEARING SELECTION: {selection_size} cells...")
+        print(f"ðŸ”„ CLEARING SELECTION: {selection_size} cells...")
         
-        # **✅ EXIT PERFORMANCE MODE IF ACTIVE**
+        # **âœ… EXIT PERFORMANCE MODE IF ACTIVE**
         if hasattr(self, '_performance_mode') and self._performance_mode:
             self.exit_performance_mode()
         
         # Clear the selection set
         self.selected_cells.clear()
         
-        # **✅ SIMPLE: Just delete all selection objects**
+        # **âœ… SIMPLE: Just delete all selection objects**
         self.canvas.delete('selection')
         self.canvas.delete('hover_preview')
         
@@ -592,54 +623,76 @@ class TextGridEditor:
         self.canvas.update_idletasks()
         
         self.debug_label.config(text=f"Selection cleared ({selection_size} cells)")
-        print(f"✅ SELECTION CLEARED: {selection_size} cells")
+        print(f"âœ… SELECTION CLEARED: {selection_size} cells")
 
     def on_vertical_scroll(self, *args):
         """Enhanced vertical scroll that maintains selection sync."""
         self.canvas.yview(*args)
-        
-        # **✅ IMMEDIATELY SYNC SELECTION AFTER SCROLL**
-        self.root.after_idle(self._redraw_visible_cells)
-        self.root.after_idle(self._sync_selection_after_scroll)
+        self._schedule_scroll_refresh()
 
     def on_horizontal_scroll(self, *args):
         """Enhanced horizontal scroll that maintains selection sync."""
         self.canvas.xview(*args)
-        
-        # **✅ IMMEDIATELY SYNC SELECTION AFTER SCROLL**
+        self._schedule_scroll_refresh()
+
+    def _schedule_scroll_refresh(self):
+        """Throttle scroll-triggered redraw/selection sync to keep highlights accurate."""
+        if self.scroll_refresh_after_id is not None:
+            try:
+                self.root.after_cancel(self.scroll_refresh_after_id)
+            except Exception:
+                pass
+            self.scroll_refresh_after_id = None
+
         self.root.after_idle(self._redraw_visible_cells)
-        self.root.after_idle(self._sync_selection_after_scroll)
+        self.scroll_refresh_after_id = self.root.after(16, self._run_scroll_refresh)
+
+    def _run_scroll_refresh(self):
+        self.scroll_refresh_after_id = None
+        self._sync_selection_after_scroll()
 
     def _sync_selection_after_scroll(self):
         """SAFE selection sync that only affects visuals, never grid data."""
         try:
-            print("🔄 SYNCING SELECTION AFTER SCROLL...")
+            if not self.selected_cells:
+                self.canvas.delete('selection')
+                return
+
+            print("ðŸ”„ SYNCING SELECTION AFTER SCROLL...")
             
-            # **✅ ONLY CLEAR SELECTION VISUALS, NOT GRID DATA**
+            # **âœ… ONLY CLEAR SELECTION VISUALS, NOT GRID DATA**
             self.canvas.delete('selection')
-            # **🚨 NEVER TOUCH GRID DATA OR CANVAS_OBJECTS HERE**
+            # **ðŸš¨ NEVER TOUCH GRID DATA OR CANVAS_OBJECTS HERE**
             
-            # **✅ GET CURRENT VISIBLE AREA**
-            canvas_width = self.canvas.winfo_width()
-            canvas_height = self.canvas.winfo_height()
-            x1, y1 = self.canvas.canvasx(0), self.canvas.canvasy(0)
-            x2, y2 = x1 + canvas_width, y1 + canvas_height
+            # Use latest visible range from redraw when available.
+            if self.previous_visible_range:
+                visible_area = self.previous_visible_range
+                visible_start_row = min(r for r, _ in visible_area)
+                visible_end_row = max(r for r, _ in visible_area) + 1
+                visible_start_col = min(c for _, c in visible_area)
+                visible_end_col = max(c for _, c in visible_area) + 1
+            else:
+                canvas_width = self.canvas.winfo_width()
+                canvas_height = self.canvas.winfo_height()
+                x1, y1 = self.canvas.canvasx(0), self.canvas.canvasy(0)
+                x2, y2 = x1 + canvas_width, y1 + canvas_height
+                visible_start_row = max(0, int(y1 // self.cell_height))
+                visible_end_row = min(self.rows, int(y2 // self.cell_height) + 1)
+                visible_start_col = max(0, int(x1 // self.cell_width))
+                visible_end_col = min(self.cols, int(x2 // self.cell_width) + 1)
+                visible_area = {
+                    (r, c)
+                    for r in range(visible_start_row, visible_end_row)
+                    for c in range(visible_start_col, visible_end_col)
+                }
 
-            visible_start_row = max(0, int(y1 // self.cell_height))
-            visible_end_row = min(self.rows, int(y2 // self.cell_height) + 1)
-            visible_start_col = max(0, int(x1 // self.cell_width))
-            visible_end_col = min(self.cols, int(x2 // self.cell_width) + 1)
-
-            visible_area = set((r, c) for r in range(visible_start_row, visible_end_row) 
-                            for c in range(visible_start_col, visible_end_col))
-
-            # **✅ FIND SELECTED CELLS IN VISIBLE AREA**
+            # **âœ… FIND SELECTED CELLS IN VISIBLE AREA**
             visible_selected = self.selected_cells & visible_area
             
-            print(f"  📊 VISIBLE AREA: rows {visible_start_row}-{visible_end_row}, cols {visible_start_col}-{visible_end_col}")
-            print(f"  📊 SELECTED CELLS: {len(self.selected_cells)} total, {len(visible_selected)} visible")
+            print(f"  ðŸ“Š VISIBLE AREA: rows {visible_start_row}-{visible_end_row}, cols {visible_start_col}-{visible_end_col}")
+            print(f"  ðŸ“Š SELECTED CELLS: {len(self.selected_cells)} total, {len(visible_selected)} visible")
 
-            # **✅ ONLY RECREATE SELECTION VISUAL RECTANGLES**
+            # **âœ… ONLY RECREATE SELECTION VISUAL RECTANGLES**
             if visible_selected:
                 outline_color = 'orange' if (hasattr(self, 'select_spaces_only') and self.select_spaces_only) else 'cyan'
                 
@@ -652,10 +705,10 @@ class TextGridEditor:
                         self.canvas.create_rectangle(x1, y1, x2, y2, outline=outline_color, 
                                                 tags='selection', width=2)
 
-            print(f"✅ SELECTION SYNC COMPLETE: {len(visible_selected)} selection rectangles recreated")
+            print(f"âœ… SELECTION SYNC COMPLETE: {len(visible_selected)} selection rectangles recreated")
             
         except Exception as e:
-            print(f"❌ Selection sync error: {e}")
+            print(f"âŒ Selection sync error: {e}")
 
     def setup_default_char_colors(self):
         """Directly apply color mappings."""
@@ -765,7 +818,7 @@ class TextGridEditor:
             print(f"File loaded. Rows: {self.rows}, Cols: {self.cols}")
             self.debug_label.config(text=f"File loaded. Rows: {self.rows}, Cols: {self.cols}")
 
-            # **✅ COMPLETE RESET AND REDRAW**
+            # **âœ… COMPLETE RESET AND REDRAW**
             self.canvas.delete("all")  # Clear everything
             self.canvas_objects.clear()  # Clear tracking
             self.selected_cells.clear()  # Clear selection
@@ -775,18 +828,18 @@ class TextGridEditor:
             if hasattr(self, 'canvas_operation_count'):
                 self.canvas_operation_count = 0
             
-            # **✅ FORCE IMMEDIATE COMPLETE REDRAW**
+            # **âœ… FORCE IMMEDIATE COMPLETE REDRAW**
             self.update_scrollregion()
             self.canvas.update_idletasks()  # Process pending operations
             
-            # **✅ FORCE FULL VISIBLE AREA REDRAW**
+            # **âœ… FORCE FULL VISIBLE AREA REDRAW**
             self._redraw_visible_cells_force_complete()
             
             # Set scrollbars to top-left
             self.canvas.xview_moveto(0)
             self.canvas.yview_moveto(0)
             
-            # **✅ SECOND REDRAW AFTER SCROLL TO ENSURE VISIBILITY**
+            # **âœ… SECOND REDRAW AFTER SCROLL TO ENSURE VISIBILITY**
             self.root.after(100, self._redraw_visible_cells_force_complete)
 
         except Exception as e:
@@ -808,7 +861,7 @@ class TextGridEditor:
             end_col = min(self.cols, int(x2 // self.cell_width) + 2)  # +2 for safety margin
             end_row = min(self.rows, int(y2 // self.cell_height) + 2)
 
-            print(f"🔄 FORCE REDRAW: rows {start_row}-{end_row}, cols {start_col}-{end_col}")
+            print(f"ðŸ”„ FORCE REDRAW: rows {start_row}-{end_row}, cols {start_col}-{end_col}")
 
             # Force redraw every visible cell
             for row in range(start_row, end_row):
@@ -824,10 +877,10 @@ class TextGridEditor:
             # Ensure text is on top
             self.canvas.tag_raise('text')
             
-            print(f"✅ FORCE REDRAW COMPLETE: {len(self.previous_visible_range)} cells drawn")
+            print(f"âœ… FORCE REDRAW COMPLETE: {len(self.previous_visible_range)} cells drawn")
             
         except Exception as e:
-            print(f"❌ Force redraw error: {e}")
+            print(f"âŒ Force redraw error: {e}")
 
     def save_to_file(self):
         filepath = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text files", "*.txt")])
@@ -861,8 +914,8 @@ class TextGridEditor:
         
         self.canvas.config(scrollregion=new_scrollregion)
         
-        print(f"📏 SCROLL REGION: {old_scrollregion} → {new_scrollregion}")
-        print(f"📐 GRID SIZE: {self.rows}x{self.cols} cells = {canvas_height}x{canvas_width} pixels")
+        print(f"ðŸ“ SCROLL REGION: {old_scrollregion} â†’ {new_scrollregion}")
+        print(f"ðŸ“ GRID SIZE: {self.rows}x{self.cols} cells = {canvas_height}x{canvas_width} pixels")
 
     def redraw_all_cells(self):
         print("Redrawing all visible cells")
@@ -895,7 +948,7 @@ class TextGridEditor:
             visible_set = set((r, c) for r in range(start_row, end_row) for c in range(start_col, end_col))
             delta_set = visible_set - self.previous_visible_range
 
-            # **✅ SIMPLE: Just update new visible cells directly**
+            # **âœ… SIMPLE: Just update new visible cells directly**
             for row, col in delta_set:
                 if 0 <= row < self.rows and 0 <= col < self.cols:
                     char = chr(self.grid[row, col])
@@ -906,21 +959,21 @@ class TextGridEditor:
             self.canvas.tag_raise('text')
             
         except Exception as e:
-            print(f"❌ Redraw error: {e}")
+            print(f"âŒ Redraw error: {e}")
 
     def progressive_redraw_visible(self, delta_set, visible_set):
         """Progressive redraw for large visible areas."""
-        # **✅ CONVERT TO LIST FOR BATCHING**
+        # **âœ… CONVERT TO LIST FOR BATCHING**
         delta_list = list(delta_set)
         batch_size = 50
         
-        # **✅ SCHEDULE BATCHED RENDERING**
+        # **âœ… SCHEDULE BATCHED RENDERING**
         for i in range(0, len(delta_list), batch_size):
             batch = delta_list[i:i + batch_size]
             delay = i // batch_size * 5  # 5ms between batches
             self.root.after(delay, self.render_visible_batch, batch)
         
-        # **✅ UPDATE TRACKING AFTER ALL BATCHES**
+        # **âœ… UPDATE TRACKING AFTER ALL BATCHES**
         self.root.after(len(delta_list) // batch_size * 5 + 10, 
                     lambda: setattr(self, 'previous_visible_range', visible_set))
         
@@ -937,26 +990,26 @@ class TextGridEditor:
             self.canvas.update_idletasks()
             
         except Exception as e:
-            print(f"❌ Visible batch render error: {e}")
+            print(f"âŒ Visible batch render error: {e}")
 
     def safe_update_canvas_object(self, row, col, char, color):
         """SAFE canvas object update that preserves grid data integrity."""
-        # **✅ VALIDATE INPUTS**
+        # **âœ… VALIDATE INPUTS**
         if not (0 <= row < self.rows and 0 <= col < self.cols):
             return
 
-        # **🚨 CRITICAL: ALWAYS READ CURRENT GRID DATA**
+        # **ðŸš¨ CRITICAL: ALWAYS READ CURRENT GRID DATA**
         actual_char = chr(self.grid[row, col])
         actual_color = self.get_char_color(actual_char)
         
-        # **✅ USE ACTUAL DATA, NOT PASSED PARAMETERS**
+        # **âœ… USE ACTUAL DATA, NOT PASSED PARAMETERS**
         key = (row, col)
         x1 = col * self.cell_width
         y1 = row * self.cell_height
         x2 = x1 + self.cell_width
         y2 = y1 + self.cell_height
 
-        # **✅ VALIDATE COORDINATES**
+        # **âœ… VALIDATE COORDINATES**
         if x1 < 0 or y1 < 0 or x2 <= x1 or y2 <= y1:
             return
 
@@ -964,30 +1017,30 @@ class TextGridEditor:
             if key in self.canvas_objects:
                 rect_id, text_id = self.canvas_objects[key]
                 
-                # **✅ VERIFY OBJECTS STILL EXIST AND UPDATE SAFELY**
+                # **âœ… VERIFY OBJECTS STILL EXIST AND UPDATE SAFELY**
                 try:
                     current_text = self.canvas.itemcget(text_id, 'text')
                     current_fill = self.canvas.itemcget(text_id, 'fill')
                     
-                    # **✅ ONLY UPDATE IF VISUAL DIFFERS FROM ACTUAL DATA**
+                    # **âœ… ONLY UPDATE IF VISUAL DIFFERS FROM ACTUAL DATA**
                     if current_text != actual_char or current_fill != actual_color:
                         self.canvas.itemconfig(text_id, text=actual_char, fill=actual_color)
                         
                 except tk.TclError:
-                    # **✅ CANVAS OBJECTS WERE DELETED - RECREATE SAFELY**
+                    # **âœ… CANVAS OBJECTS WERE DELETED - RECREATE SAFELY**
                     del self.canvas_objects[key]
                     self.create_safe_canvas_object(row, col, actual_char, actual_color, x1, y1, x2, y2)
             else:
-                # **✅ CREATE NEW CANVAS OBJECTS SAFELY**
+                # **âœ… CREATE NEW CANVAS OBJECTS SAFELY**
                 self.create_safe_canvas_object(row, col, actual_char, actual_color, x1, y1, x2, y2)
                 
         except Exception as e:
-            print(f"❌ Safe canvas object update error at ({row}, {col}): {e}")
+            print(f"âŒ Safe canvas object update error at ({row}, {col}): {e}")
 
     def create_safe_canvas_object(self, row, col, char, color, x1, y1, x2, y2):
         """Create canvas objects safely with actual grid data."""
         try:
-            # **🚨 DOUBLE-CHECK: Always read current grid data**
+            # **ðŸš¨ DOUBLE-CHECK: Always read current grid data**
             if 0 <= row < self.rows and 0 <= col < self.cols:
                 actual_char = chr(self.grid[row, col])
                 actual_color = self.get_char_color(actual_char)
@@ -1000,15 +1053,15 @@ class TextGridEditor:
                 )
                 self.canvas_objects[(row, col)] = (rect_id, text_id)
                 
-                print(f"🔧 SAFELY CREATED: ({row}, {col}) = '{actual_char}'")
+                print(f"ðŸ”§ SAFELY CREATED: ({row}, {col}) = '{actual_char}'")
             
         except Exception as e:
-            print(f"❌ Failed to safely create canvas objects at ({row}, {col}): {e}")
+            print(f"âŒ Failed to safely create canvas objects at ({row}, {col}): {e}")
 
 
     def update_canvas_object(self, row, col, char, color):
         """Enhanced canvas object update with error recovery."""
-        # **✅ VALIDATE INPUTS**
+        # **âœ… VALIDATE INPUTS**
         if not (0 <= row < self.rows and 0 <= col < self.cols):
             return
 
@@ -1018,7 +1071,7 @@ class TextGridEditor:
         x2 = x1 + self.cell_width
         y2 = y1 + self.cell_height
 
-        # **✅ VALIDATE COORDINATES**
+        # **âœ… VALIDATE COORDINATES**
         if x1 < 0 or y1 < 0 or x2 <= x1 or y2 <= y1:
             return
 
@@ -1026,7 +1079,7 @@ class TextGridEditor:
             if key in self.canvas_objects:
                 rect_id, text_id = self.canvas_objects[key]
                 
-                # **✅ VERIFY OBJECTS STILL EXIST**
+                # **âœ… VERIFY OBJECTS STILL EXIST**
                 try:
                     current_text = self.canvas.itemcget(text_id, 'text')
                     if current_text != char:
@@ -1036,11 +1089,11 @@ class TextGridEditor:
                     del self.canvas_objects[key]
                     self.create_new_canvas_object(row, col, char, color, x1, y1, x2, y2)
             else:
-                # **✅ CREATE NEW CANVAS OBJECTS**
+                # **âœ… CREATE NEW CANVAS OBJECTS**
                 self.create_new_canvas_object(row, col, char, color, x1, y1, x2, y2)
                 
         except Exception as e:
-            print(f"❌ Canvas object update error at ({row}, {col}): {e}")
+            print(f"âŒ Canvas object update error at ({row}, {col}): {e}")
 
     def create_new_canvas_object(self, row, col, char, color, x1, y1, x2, y2):
         """Create new canvas objects and track them."""
@@ -1053,7 +1106,7 @@ class TextGridEditor:
             self.canvas_objects[(row, col)] = (rect_id, text_id)
             
         except Exception as e:
-            print(f"❌ Failed to create canvas objects at ({row}, {col}): {e}")
+            print(f"âŒ Failed to create canvas objects at ({row}, {col}): {e}")
 
     def batch_redraw_cells(self, cell_positions):
         """Batch redraw multiple cells efficiently."""
@@ -1099,11 +1152,11 @@ class TextGridEditor:
             
             cell_key = (row, col)
             
-            # **✅ CHECK IF CANVAS OBJECTS EXIST**
+            # **âœ… CHECK IF CANVAS OBJECTS EXIST**
             if cell_key in self.canvas_objects:
                 rect_id, text_id = self.canvas_objects[cell_key]
                 
-                # **✅ VERIFY OBJECTS STILL EXIST ON CANVAS**
+                # **âœ… VERIFY OBJECTS STILL EXIST ON CANVAS**
                 try:
                     current_text = self.canvas.itemcget(text_id, 'text')
                     current_fill = self.canvas.itemcget(text_id, 'fill')
@@ -1111,20 +1164,20 @@ class TextGridEditor:
                     # Update if different
                     if current_text != char or current_fill != color:
                         self.canvas.itemconfig(text_id, text=char, fill=color)
-                        print(f"📝 UPDATED CELL: ({row}, {col}) = '{char}'")
+                        print(f"ðŸ“ UPDATED CELL: ({row}, {col}) = '{char}'")
                         
                 except tk.TclError:
                     # Canvas objects were deleted - remove from tracking and recreate
-                    print(f"🔧 RECREATING MISSING CANVAS OBJECTS: ({row}, {col})")
+                    print(f"ðŸ”§ RECREATING MISSING CANVAS OBJECTS: ({row}, {col})")
                     del self.canvas_objects[cell_key]
                     self.update_canvas_object(row, col, char, color)
             else:
-                # **✅ CREATE MISSING CANVAS OBJECTS**
-                print(f"🔧 CREATING MISSING CANVAS OBJECTS: ({row}, {col})")
+                # **âœ… CREATE MISSING CANVAS OBJECTS**
+                print(f"ðŸ”§ CREATING MISSING CANVAS OBJECTS: ({row}, {col})")
                 self.update_canvas_object(row, col, char, color)
                 
         except Exception as e:
-            print(f"❌ Redraw cell error at ({row}, {col}): {e}")
+            print(f"âŒ Redraw cell error at ({row}, {col}): {e}")
 
     def on_zoom(self, value):
         if self.resize_after_id:
@@ -1136,7 +1189,7 @@ class TextGridEditor:
         self.resize_after_id = None
         zoom_percentage = self.zoom_percentage.get()
         
-        # **✅ STORE OLD CELL SIZES**
+        # **âœ… STORE OLD CELL SIZES**
         old_cell_width = self.cell_width
         old_cell_height = self.cell_height
         
@@ -1145,7 +1198,7 @@ class TextGridEditor:
         self.cell_width = int(self.base_cell_width * self.zoom_factor)
         self.cell_height = int(self.base_cell_height * self.zoom_factor)
         
-        print(f"🔍 ZOOM: {old_cell_width}x{old_cell_height} → {self.cell_width}x{self.cell_height}")
+        print(f"ðŸ” ZOOM: {old_cell_width}x{old_cell_height} â†’ {self.cell_width}x{self.cell_height}")
 
         # Calculate the center of the visible area BEFORE zooming (using OLD cell sizes)
         try:
@@ -1156,27 +1209,27 @@ class TextGridEditor:
             center_col = int(visible_center_x / old_cell_width)
             center_row = int(visible_center_y / old_cell_height)
             
-            print(f"🎯 CENTER: ({center_row}, {center_col}) based on old cell size")
+            print(f"ðŸŽ¯ CENTER: ({center_row}, {center_col}) based on old cell size")
         except:
             center_col, center_row = self.cols // 2, self.rows // 2
-            print(f"🎯 CENTER: Using fallback ({center_row}, {center_col})")
+            print(f"ðŸŽ¯ CENTER: Using fallback ({center_row}, {center_col})")
 
-        # **✅ COMPLETE CANVAS RESET**
-        print("🧹 Clearing all canvas objects...")
+        # **âœ… COMPLETE CANVAS RESET**
+        print("ðŸ§¹ Clearing all canvas objects...")
         self.canvas.delete("all")
         self.canvas_objects.clear()
         
-        # **✅ FORCE RESET VISIBLE RANGE TRACKING**
+        # **âœ… FORCE RESET VISIBLE RANGE TRACKING**
         self.previous_visible_range = set()
         
-        # **✅ RESET CLEANUP COUNTERS**
+        # **âœ… RESET CLEANUP COUNTERS**
         if hasattr(self, 'canvas_operation_count'):
             self.canvas_operation_count = 0
 
         # Update scroll region with new cell sizes
         self.update_scrollregion()
         
-        # **✅ FORCE IMMEDIATE CANVAS UPDATE**
+        # **âœ… FORCE IMMEDIATE CANVAS UPDATE**
         self.canvas.update_idletasks()
 
         # Calculate new scroll position to keep the center point (using NEW cell sizes)
@@ -1195,35 +1248,35 @@ class TextGridEditor:
             scroll_y_fraction = max(0, min(1, new_scroll_y / total_height))
             self.canvas.yview_moveto(scroll_y_fraction)
 
-        print(f"📍 SCROLL: Moving to ({scroll_x_fraction:.3f}, {scroll_y_fraction:.3f})")
+        print(f"ðŸ“ SCROLL: Moving to ({scroll_x_fraction:.3f}, {scroll_y_fraction:.3f})")
 
-        # **✅ FORCE COMPLETE REDRAW AFTER ZOOM**
+        # **âœ… FORCE COMPLETE REDRAW AFTER ZOOM**
         self.root.after_idle(self._force_complete_redraw_after_zoom)
 
-        print(f"✅ ZOOM COMPLETE: {self.zoom_factor:.2f}x, centered at ({center_col}, {center_row})")
+        print(f"âœ… ZOOM COMPLETE: {self.zoom_factor:.2f}x, centered at ({center_col}, {center_row})")
 
     def _force_complete_redraw_after_zoom(self):
         """Force complete redraw after zoom with expanded area calculation."""
         try:
-            print("🔄 FORCE REDRAW AFTER ZOOM...")
+            print("ðŸ”„ FORCE REDRAW AFTER ZOOM...")
             
-            # **✅ GET CURRENT VISIBLE AREA WITH NEW CELL SIZES**
+            # **âœ… GET CURRENT VISIBLE AREA WITH NEW CELL SIZES**
             canvas_width = self.canvas.winfo_width()
             canvas_height = self.canvas.winfo_height()
             x1, y1 = self.canvas.canvasx(0), self.canvas.canvasy(0)
             x2, y2 = x1 + canvas_width, y1 + canvas_height
 
-            # **✅ CALCULATE WITH GENEROUS BUFFER FOR ZOOM**
+            # **âœ… CALCULATE WITH GENEROUS BUFFER FOR ZOOM**
             buffer_cells = 10  # Extra buffer for zoom
             start_col = max(0, int(x1 // self.cell_width) - buffer_cells)
             start_row = max(0, int(y1 // self.cell_height) - buffer_cells)
             end_col = min(self.cols, int(x2 // self.cell_width) + buffer_cells + 1)
             end_row = min(self.rows, int(y2 // self.cell_height) + buffer_cells + 1)
 
-            print(f"🔄 REDRAW AREA: rows {start_row}-{end_row}, cols {start_col}-{end_col}")
-            print(f"🔄 CELL SIZE: {self.cell_width}x{self.cell_height}")
+            print(f"ðŸ”„ REDRAW AREA: rows {start_row}-{end_row}, cols {start_col}-{end_col}")
+            print(f"ðŸ”„ CELL SIZE: {self.cell_width}x{self.cell_height}")
 
-            # **✅ FORCE REDRAW EVERY CELL IN EXPANDED AREA**
+            # **âœ… FORCE REDRAW EVERY CELL IN EXPANDED AREA**
             cells_drawn = 0
             for row in range(start_row, end_row):
                 for col in range(start_col, end_col):
@@ -1233,26 +1286,26 @@ class TextGridEditor:
                         self.update_canvas_object(row, col, char, color)
                         cells_drawn += 1
 
-            # **✅ UPDATE VISIBLE RANGE TRACKING**
+            # **âœ… UPDATE VISIBLE RANGE TRACKING**
             self.previous_visible_range = set((r, c) for r in range(start_row, end_row) for c in range(start_col, end_col))
             
             # Ensure text is on top
             self.canvas.tag_raise('text')
             
-            print(f"✅ ZOOM REDRAW COMPLETE: {cells_drawn} cells drawn")
+            print(f"âœ… ZOOM REDRAW COMPLETE: {cells_drawn} cells drawn")
             
-            # **✅ SECOND PASS AFTER BRIEF DELAY**
+            # **âœ… SECOND PASS AFTER BRIEF DELAY**
             self.root.after(200, self._second_pass_redraw)
             
         except Exception as e:
-            print(f"❌ Zoom redraw error: {e}")
+            print(f"âŒ Zoom redraw error: {e}")
             # Fallback to regular redraw
             self._redraw_visible_cells()
 
     def _second_pass_redraw(self):
         """Second pass redraw to ensure nothing was missed."""
         try:
-            print("🔄 SECOND PASS REDRAW...")
+            print("ðŸ”„ SECOND PASS REDRAW...")
             
             # Get current visible area again (in case user scrolled)
             canvas_width = self.canvas.winfo_width()
@@ -1278,16 +1331,16 @@ class TextGridEditor:
                             missing_cells += 1
 
             if missing_cells > 0:
-                print(f"🔧 SECOND PASS: Fixed {missing_cells} missing cells")
+                print(f"ðŸ”§ SECOND PASS: Fixed {missing_cells} missing cells")
             else:
-                print("✅ SECOND PASS: No missing cells found")
+                print("âœ… SECOND PASS: No missing cells found")
                 
         except Exception as e:
-            print(f"❌ Second pass error: {e}")
+            print(f"âŒ Second pass error: {e}")
 
     def on_canvas_configure(self, event):
         """Enhanced canvas configure handling."""
-        print(f"📺 CANVAS CONFIGURE: {event.width}x{event.height}")
+        print(f"ðŸ“º CANVAS CONFIGURE: {event.width}x{event.height}")
         
         # Update scroll region
         self.update_scrollregion()
@@ -1301,14 +1354,14 @@ class TextGridEditor:
         row = int(self.canvas.canvasy(event.y) // self.cell_height)
         ctrl_held = event.state & 0x4
 
-        # **✅ IMMEDIATELY CLEAR HOVER PREVIEW**
+        # **âœ… IMMEDIATELY CLEAR HOVER PREVIEW**
         self.canvas.delete('hover_preview')
 
-        # **✅ CHECK SPACE-ONLY MODE**
+        # **âœ… CHECK SPACE-ONLY MODE**
         if not hasattr(self, 'select_spaces_only'):
             self.select_spaces_only = False
 
-        print(f"🖱️ CLICK: ({row}, {col}), Ctrl: {ctrl_held}, Space-only: {self.select_spaces_only}")
+        print(f"ðŸ–±ï¸ CLICK: ({row}, {col}), Ctrl: {ctrl_held}, Space-only: {self.select_spaces_only}")
 
         if self.smart_select_pending and not ctrl_held:
             settings = self.smart_select_pending
@@ -1332,24 +1385,24 @@ class TextGridEditor:
             
             if cells_to_remove:
                 self.selected_cells -= cells_to_remove
-                print(f"  ❌ DE-SELECTED: {len(cells_to_remove)} cells")
+                print(f"  âŒ DE-SELECTED: {len(cells_to_remove)} cells")
                 self.update_selection()
             return
 
-        # **✅ ALWAYS USE BRUSH PAINTING - NO RECTANGLE MODE**
+        # **âœ… ALWAYS USE BRUSH PAINTING - NO RECTANGLE MODE**
         self.apply_brush(event)
 
-        # **✅ NEVER SET RECTANGLE START DURING BRUSH PAINTING**
+        # **âœ… NEVER SET RECTANGLE START DURING BRUSH PAINTING**
         # Rectangle selection is only for keyboard shortcuts or special modes
         self.rect_start = None
         self.rect_end = None
         
-        print(f"🖌️ BRUSH PAINT: Applied to ({row}, {col})")
+        print(f"ðŸ–Œï¸ BRUSH PAINT: Applied to ({row}, {col})")
         self.update_selection()
 
     def apply_brush(self, event):
         """Optimized apply_brush that maintains fast painting regardless of selection size."""
-        # **✅ BOUNDARY CHECKS**
+        # **âœ… BOUNDARY CHECKS**
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
         
@@ -1384,7 +1437,7 @@ class TextGridEditor:
                             
                 new_selections.add((target_row, target_col))
                 
-                # **✅ ALWAYS CREATE SELECTION VISUALS FOR NEW SELECTIONS**
+                # **âœ… ALWAYS CREATE SELECTION VISUALS FOR NEW SELECTIONS**
                 if (target_row, target_col) not in self.selected_cells:
                     x1 = target_col * self.cell_width
                     y1 = target_row * self.cell_height
@@ -1396,13 +1449,13 @@ class TextGridEditor:
                         self.canvas.create_rectangle(x1, y1, x2, y2, outline=outline_color, 
                                                 tags='selection', width=2)
         
-        # **✅ ADD TO SELECTION**
+        # **âœ… ADD TO SELECTION**
         if new_selections:
             old_size = len(self.selected_cells)
             self.selected_cells.update(new_selections)
             new_size = len(self.selected_cells)
             
-            print(f"🖌️ PAINTED: {len(new_selections)} new cells, total: {new_size}")
+            print(f"ðŸ–Œï¸ PAINTED: {len(new_selections)} new cells, total: {new_size}")
 
     def safe_cleanup_canvas_objects(self):
         """SAFE cleanup that only removes canvas objects, never grid data."""
@@ -1410,9 +1463,9 @@ class TextGridEditor:
             if not hasattr(self, 'canvas_objects') or len(self.canvas_objects) < 1000:
                 return
             
-            print(f"🧹 SAFE CLEANUP: Current count: {len(self.canvas_objects)}")
+            print(f"ðŸ§¹ SAFE CLEANUP: Current count: {len(self.canvas_objects)}")
             
-            # **✅ GET VISIBLE AREA**
+            # **âœ… GET VISIBLE AREA**
             canvas_width = self.canvas.winfo_width()
             canvas_height = self.canvas.winfo_height()
             x1, y1 = self.canvas.canvasx(0), self.canvas.canvasy(0)
@@ -1424,7 +1477,7 @@ class TextGridEditor:
             visible_start_col = max(0, int(x1 // self.cell_width) - buffer_cells)
             visible_end_col = min(self.cols, int(x2 // self.cell_width) + buffer_cells)
             
-            # **✅ ONLY REMOVE CANVAS OBJECTS, PRESERVE GRID DATA**
+            # **âœ… ONLY REMOVE CANVAS OBJECTS, PRESERVE GRID DATA**
             to_remove = []
             removed_count = 0
             
@@ -1432,7 +1485,7 @@ class TextGridEditor:
                 if (row < visible_start_row or row > visible_end_row or
                     col < visible_start_col or col > visible_end_col):
                     try:
-                        # **🚨 ONLY DELETE CANVAS OBJECTS, NOT GRID DATA**
+                        # **ðŸš¨ ONLY DELETE CANVAS OBJECTS, NOT GRID DATA**
                         self.canvas.delete(rect_id)
                         self.canvas.delete(text_id)
                         to_remove.append((row, col))
@@ -1440,15 +1493,15 @@ class TextGridEditor:
                     except:
                         to_remove.append((row, col))
             
-            # **✅ REMOVE FROM CANVAS TRACKING ONLY**
+            # **âœ… REMOVE FROM CANVAS TRACKING ONLY**
             for key in to_remove:
                 if key in self.canvas_objects:
                     del self.canvas_objects[key]
             
-            print(f"✅ SAFE CLEANUP COMPLETE: Removed {removed_count} canvas objects. Grid data preserved.")
+            print(f"âœ… SAFE CLEANUP COMPLETE: Removed {removed_count} canvas objects. Grid data preserved.")
             
         except Exception as e:
-            print(f"❌ Safe cleanup error: {e}")
+            print(f"âŒ Safe cleanup error: {e}")
 
     def _finish_brush_update(self):
         """Complete brush update after all mouse movements are done."""
@@ -1475,16 +1528,16 @@ class TextGridEditor:
             except ValueError:
                 self._cleanup_after_painting_id = None
         
-        # **✅ ONLY BRUSH PAINTING DURING DRAG**
+        # **âœ… ONLY BRUSH PAINTING DURING DRAG**
         self.apply_brush(event)
         
         col = int(self.canvas.canvasx(event.x) // self.cell_width)
         row = int(self.canvas.canvasy(event.y) // self.cell_height)
         
-        # **✅ IMMEDIATE: Update hover preview so cursor follows**
+        # **âœ… IMMEDIATE: Update hover preview so cursor follows**
         self.on_mouse_motion(event)
         
-        # **✅ ENSURE NO RECTANGLE SELECTION DURING DRAG**
+        # **âœ… ENSURE NO RECTANGLE SELECTION DURING DRAG**
         self.rect_start = None
         self.rect_end = None
         
@@ -1501,10 +1554,10 @@ class TextGridEditor:
 
     def debug_grid_integrity(self):
         """Debug method to check for grid data corruption."""
-        print(f"\n🔍 GRID INTEGRITY CHECK:")
+        print(f"\nðŸ” GRID INTEGRITY CHECK:")
         
         if not hasattr(self, 'grid') or self.grid is None:
-            print("  ❌ NO GRID DATA")
+            print("  âŒ NO GRID DATA")
             return False
         
         # Check for corrupted data in selected region
@@ -1530,10 +1583,10 @@ class TextGridEditor:
         print(f"  Valid character cells: {len(valid_chars)}")
         
         if black_cells:
-            print(f"  ❌ CORRUPTION DETECTED: {black_cells[:5]}...")  # Show first 5
+            print(f"  âŒ CORRUPTION DETECTED: {black_cells[:5]}...")  # Show first 5
             return False
         else:
-            print("  ✅ Grid integrity OK")
+            print("  âœ… Grid integrity OK")
             return True
 
 
@@ -1542,7 +1595,7 @@ class TextGridEditor:
         if not hasattr(self, 'select_spaces_only'):
             self.select_spaces_only = False
             
-        print(f"\n🔍 SPACE SELECTION DEBUG:")
+        print(f"\nðŸ” SPACE SELECTION DEBUG:")
         print(f"  Mode: {'SPACE-ONLY' if self.select_spaces_only else 'NORMAL'}")
         print(f"  Selected cells: {len(self.selected_cells)}")
         
@@ -1555,11 +1608,11 @@ class TextGridEditor:
                         invalid_selections.append((row, col, char, ord(char)))
             
             if invalid_selections:
-                print(f"  ❌ INVALID SELECTIONS: {len(invalid_selections)}")
+                print(f"  âŒ INVALID SELECTIONS: {len(invalid_selections)}")
                 for row, col, char, ascii_val in invalid_selections[:5]:  # Show first 5
                     print(f"    ({row}, {col}): '{char}' (ASCII {ascii_val})")
             else:
-                print(f"  ✅ ALL SELECTIONS VALID (spaces only)")
+                print(f"  âœ… ALL SELECTIONS VALID (spaces only)")
         
         print()
 
@@ -1581,7 +1634,7 @@ class TextGridEditor:
                             if visible_start_row <= k[0] < visible_end_row 
                             and visible_start_col <= k[1] < visible_end_col])
             
-            print(f"🔍 DEBUG STATE:")
+            print(f"ðŸ” DEBUG STATE:")
             print(f"  Canvas: {canvas_width}x{canvas_height}")
             print(f"  Scroll: ({x1:.1f}, {y1:.1f}) to ({x2:.1f}, {y2:.1f})")
             print(f"  Visible: rows {visible_start_row}-{visible_end_row}, cols {visible_start_col}-{visible_end_col}")
@@ -1590,12 +1643,12 @@ class TextGridEditor:
             print(f"  Zoom: {self.zoom_factor:.2f}x")
             
             if actual_cells < expected_cells * 0.9:  # Less than 90% of expected cells
-                print("⚠️  MISSING CELLS DETECTED!")
+                print("âš ï¸  MISSING CELLS DETECTED!")
                 return False
             return True
             
         except Exception as e:
-            print(f"❌ Debug state error: {e}")
+            print(f"âŒ Debug state error: {e}")
             return False
 
     def _finish_painting_session(self):
@@ -1610,21 +1663,21 @@ class TextGridEditor:
                 self.cleanup_threshold = 2000
             
             selection_size = len(self.selected_cells) if hasattr(self, 'selected_cells') else 0
-            print(f"🏁 PAINTING SESSION COMPLETE: {selection_size} total selected cells")
+            print(f"ðŸ PAINTING SESSION COMPLETE: {selection_size} total selected cells")
             
-            # **✅ ALWAYS ALLOW SOME CLEANUP FOR CANVAS HEALTH**
+            # **âœ… ALWAYS ALLOW SOME CLEANUP FOR CANVAS HEALTH**
             if self.canvas_operation_count > self.cleanup_threshold:
-                # **✅ GENTLE CLEANUP EVEN WITH LARGE SELECTIONS**
+                # **âœ… GENTLE CLEANUP EVEN WITH LARGE SELECTIONS**
                 if hasattr(self, 'safe_cleanup_canvas_objects'):
                     self.safe_cleanup_canvas_objects()
                 self.canvas_operation_count = 0
-                print("🧹 GENTLE CLEANUP PERFORMED")
+                print("ðŸ§¹ GENTLE CLEANUP PERFORMED")
             
-            # **✅ FORCE CANVAS UPDATE TO ENSURE VISUALS ARE CURRENT**
+            # **âœ… FORCE CANVAS UPDATE TO ENSURE VISUALS ARE CURRENT**
             self.canvas.update_idletasks()
                     
         except Exception as e:
-            print(f"❌ Error in _finish_painting_session: {e}")
+            print(f"âŒ Error in _finish_painting_session: {e}")
             self._currently_painting = False
             if hasattr(self, 'canvas_operation_count'):
                 self.canvas_operation_count = 0
@@ -1641,26 +1694,26 @@ class TextGridEditor:
         row = int(self.canvas.canvasy(event.y) // self.cell_height)
         ctrl_held = event.state & 0x4
         
-        print(f"🖱 Release at ({row}, {col}) - Brush painting complete")
+        print(f"ðŸ–± Release at ({row}, {col}) - Brush painting complete")
 
         if ctrl_held:
             return
 
-        # **✅ NEVER DO RECTANGLE SELECTION AFTER BRUSH PAINTING**
+        # **âœ… NEVER DO RECTANGLE SELECTION AFTER BRUSH PAINTING**
         # Rectangle selection is disabled for mouse painting
         
         # Mark painting session as finished
         self._currently_painting = False
         self.is_selecting = False
         
-        # **✅ ENSURE RECTANGLE STATE IS CLEARED**
+        # **âœ… ENSURE RECTANGLE STATE IS CLEARED**
         self.rect_start = None
         self.rect_end = None
         
         # Schedule cleanup now that painting is done
         self.root.after(100, self._finish_painting_session)
         
-        print("✅ PAINTING SESSION COMPLETE - No rectangles created")
+        print("âœ… PAINTING SESSION COMPLETE - No rectangles created")
 
     def on_keypress(self, event):
         """Optimized keypress handling that's fast regardless of selection size."""
@@ -1672,9 +1725,9 @@ class TextGridEditor:
             return
 
         selection_size = len(self.selected_cells)
-        print(f"🔤 KEYPRESS: '{char}' for {selection_size} selected cells")
+        print(f"ðŸ”¤ KEYPRESS: '{char}' for {selection_size} selected cells")
 
-        # **✅ DIRECT GRID UPDATES - ALWAYS FAST**
+        # **âœ… DIRECT GRID UPDATES - ALWAYS FAST**
         undo_action = []
         cells_changed = 0
         visible_updates = []
@@ -1702,13 +1755,13 @@ class TextGridEditor:
                     self.grid[row, col] = ord(new_char)  # Direct fast update
                     cells_changed += 1
                     
-                    # **✅ TRACK VISIBLE CELLS FOR IMMEDIATE UPDATE**
+                    # **âœ… TRACK VISIBLE CELLS FOR IMMEDIATE UPDATE**
                     if (row, col) in visible_area:
                         visible_updates.append((row, col))
 
-        print(f"  📝 UPDATED: {cells_changed} cells, {len(visible_updates)} visible")
+        print(f"  ðŸ“ UPDATED: {cells_changed} cells, {len(visible_updates)} visible")
 
-        # **✅ ADD TO UNDO STACK**
+        # **âœ… ADD TO UNDO STACK**
         if undo_action:
             if not hasattr(self, 'undo_stack'):
                 self.undo_stack = []
@@ -1716,7 +1769,7 @@ class TextGridEditor:
             if len(self.undo_stack) > self.max_undo:
                 self.undo_stack.pop(0)
 
-        # **✅ IMMEDIATE VISUAL UPDATES FOR VISIBLE CELLS ONLY**
+        # **âœ… IMMEDIATE VISUAL UPDATES FOR VISIBLE CELLS ONLY**
         if visible_updates:
             for row, col in visible_updates:
                 if 0 <= row < self.rows and 0 <= col < self.cols:
@@ -1724,23 +1777,23 @@ class TextGridEditor:
                     color = self.get_char_color(char)
                     self.simple_update_canvas_object(row, col, char, color)
             
-            # **✅ SINGLE CANVAS UPDATE**
+            # **âœ… SINGLE CANVAS UPDATE**
             self.canvas.update_idletasks()
 
-        print(f"✅ KEYPRESS COMPLETE: {cells_changed} cells changed, {len(visible_updates)} visible updates")
+        print(f"âœ… KEYPRESS COMPLETE: {cells_changed} cells changed, {len(visible_updates)} visible updates")
 
 
     def simple_cleanup_check(self):
         """Modified cleanup check that allows cleanup even with large selections."""
-        # **✅ ONLY DISABLE CLEANUP IF EXTREMELY LARGE SELECTION AND ACTIVELY PAINTING**
+        # **âœ… ONLY DISABLE CLEANUP IF EXTREMELY LARGE SELECTION AND ACTIVELY PAINTING**
         if (hasattr(self, 'selected_cells') and len(self.selected_cells) > 2000 and 
             hasattr(self, '_currently_painting') and self._currently_painting):
-            print("⏸️  CLEANUP DISABLED: Very large selection and actively painting")
+            print("â¸ï¸  CLEANUP DISABLED: Very large selection and actively painting")
             return False
         
-        # **✅ ALLOW CLEANUP FOR CANVAS MANAGEMENT**
+        # **âœ… ALLOW CLEANUP FOR CANVAS MANAGEMENT**
         if hasattr(self, 'canvas_objects') and len(self.canvas_objects) > 3000:
-            print("🧹 CLEANUP NEEDED: Too many canvas objects")
+            print("ðŸ§¹ CLEANUP NEEDED: Too many canvas objects")
             return True
         
         return True
@@ -1772,7 +1825,7 @@ class TextGridEditor:
             )
             self.canvas_objects[key] = (rect_id, text_id)
         except Exception as e:
-            print(f"❌ Failed to create canvas object at ({row}, {col}): {e}")
+            print(f"âŒ Failed to create canvas object at ({row}, {col}): {e}")
             
     def handle_normal_selection_keypress(self, char, selection_size):
         """Handle normal-sized selections with immediate rendering."""
@@ -1790,7 +1843,7 @@ class TextGridEditor:
                     cells_changed += 1
 
         if updates:
-            # **✅ IMMEDIATE UPDATE FOR SMALL SELECTIONS**
+            # **âœ… IMMEDIATE UPDATE FOR SMALL SELECTIONS**
             self.batch_update_cells(updates)
             
             # Force redraw visible cells
@@ -1806,13 +1859,13 @@ class TextGridEditor:
                 if len(self.undo_stack) > self.max_undo:
                     self.undo_stack.pop(0)
             
-            print(f"✅ NORMAL KEYPRESS: {cells_changed} cells updated immediately")
+            print(f"âœ… NORMAL KEYPRESS: {cells_changed} cells updated immediately")
 
     def handle_large_selection_keypress(self, char, selection_size):
         """Handle large selections with progressive batched rendering."""
-        print(f"🔄 PROCESSING LARGE SELECTION: {selection_size} cells...")
+        print(f"ðŸ”„ PROCESSING LARGE SELECTION: {selection_size} cells...")
         
-        # **✅ UPDATE GRID DATA FIRST (FAST)**
+        # **âœ… UPDATE GRID DATA FIRST (FAST)**
         updates = []
         undo_action = []
         cells_changed = 0
@@ -1827,9 +1880,9 @@ class TextGridEditor:
                     updates.append((row, col))
                     cells_changed += 1
 
-        print(f"  📝 GRID UPDATED: {cells_changed} cells changed")
+        print(f"  ðŸ“ GRID UPDATED: {cells_changed} cells changed")
 
-        # **✅ ADD TO UNDO STACK**
+        # **âœ… ADD TO UNDO STACK**
         if undo_action:
             if not hasattr(self, 'undo_stack'):
                 self.undo_stack = []
@@ -1837,17 +1890,17 @@ class TextGridEditor:
             if len(self.undo_stack) > self.max_undo:
                 self.undo_stack.pop(0)
 
-        # **✅ PROGRESSIVE VISUAL RENDERING**
+        # **âœ… PROGRESSIVE VISUAL RENDERING**
         if updates:
             self.progressive_visual_update(updates)
         
-        print(f"✅ LARGE SELECTION COMPLETE: {cells_changed} cells processed")
+        print(f"âœ… LARGE SELECTION COMPLETE: {cells_changed} cells processed")
     def render_cell_batch(self, batch):
         """Render a batch of cells without overwhelming the canvas."""
         try:
             for row, col in batch:
                 if 0 <= row < self.rows and 0 <= col < self.cols:
-                    # **✅ SAFE CELL REDRAW**
+                    # **âœ… SAFE CELL REDRAW**
                     char = chr(self.grid[row, col])
                     color = self.get_char_color(char)
                     self.safe_update_canvas_object(row, col, char, color)
@@ -1856,23 +1909,23 @@ class TextGridEditor:
             self.canvas.update_idletasks()
             
         except Exception as e:
-            print(f"❌ Batch render error: {e}")
+            print(f"âŒ Batch render error: {e}")
 
     def rebuild_large_selection_visuals(self):
         """Rebuild selection visuals for large selections."""
         try:
-            print("🔄 REBUILDING LARGE SELECTION VISUALS...")
+            print("ðŸ”„ REBUILDING LARGE SELECTION VISUALS...")
             
-            # **✅ CLEAR EXISTING SELECTION VISUALS**
+            # **âœ… CLEAR EXISTING SELECTION VISUALS**
             self.canvas.delete('selection')
             
-            # **✅ ONLY REBUILD VISIBLE SELECTION**
+            # **âœ… ONLY REBUILD VISIBLE SELECTION**
             visible_selected = self.selected_cells & self.previous_visible_range
             
             if visible_selected:
                 outline_color = 'orange' if (hasattr(self, 'select_spaces_only') and self.select_spaces_only) else 'cyan'
                 
-                # **✅ CREATE SELECTION VISUALS IN BATCHES**
+                # **âœ… CREATE SELECTION VISUALS IN BATCHES**
                 batch_size = 50
                 selected_list = list(visible_selected)
                 
@@ -1880,10 +1933,10 @@ class TextGridEditor:
                     batch = selected_list[i:i + batch_size]
                     self.root.after(i // batch_size * 5, self.create_selection_batch, batch, outline_color)
             
-            print(f"✅ SELECTION VISUALS SCHEDULED: {len(visible_selected)} visible selections")
+            print(f"âœ… SELECTION VISUALS SCHEDULED: {len(visible_selected)} visible selections")
             
         except Exception as e:
-            print(f"❌ Selection rebuild error: {e}")
+            print(f"âŒ Selection rebuild error: {e}")
 
     def create_selection_batch(self, batch, outline_color):
         """Create a batch of selection rectangles."""
@@ -1902,17 +1955,17 @@ class TextGridEditor:
             self.canvas.update_idletasks()
             
         except Exception as e:
-            print(f"❌ Selection batch error: {e}")
+            print(f"âŒ Selection batch error: {e}")
 
     def progressive_visual_update(self, updates):
         """Progressive visual update for large selections to prevent canvas overload."""
-        # **✅ ONLY UPDATE VISIBLE CELLS IMMEDIATELY**
+        # **âœ… ONLY UPDATE VISIBLE CELLS IMMEDIATELY**
         visible_updates = [(row, col) for row, col in updates 
                         if (row, col) in self.previous_visible_range]
         
-        print(f"  🎨 VISUAL UPDATE: {len(visible_updates)} visible cells of {len(updates)} total")
+        print(f"  ðŸŽ¨ VISUAL UPDATE: {len(visible_updates)} visible cells of {len(updates)} total")
         
-        # **✅ BATCH VISIBLE UPDATES**
+        # **âœ… BATCH VISIBLE UPDATES**
         batch_size = 100  # Process 100 cells at a time
         for i in range(0, len(visible_updates), batch_size):
             batch = visible_updates[i:i + batch_size]
@@ -1920,12 +1973,19 @@ class TextGridEditor:
             # Schedule batch update
             self.root.after(i // batch_size * 10, self.render_cell_batch, batch)
         
-        # **✅ CLEAR AND REBUILD SELECTION VISUALS**
+        # **âœ… CLEAR AND REBUILD SELECTION VISUALS**
         self.root.after(50, self.rebuild_large_selection_visuals)
 
     def on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        self.root.after_idle(self._redraw_visible_cells)
+        units = int(-1 * (event.delta / 120))
+        if units == 0:
+            if event.delta > 0:
+                units = -1
+            elif event.delta < 0:
+                units = 1
+        if units != 0:
+            self.canvas.yview_scroll(units, "units")
+            self._schedule_scroll_refresh()
 
     def alt_pressed_callback(self, event):
         """Toggles between freeform and rectangle selection when Alt is pressed."""
@@ -1944,14 +2004,14 @@ class TextGridEditor:
     def undo(self, event=None):
         """Reverts the last selection change (Ctrl+Z)."""
         if not self.undo_stack:
-            print("UNDO STACK EMPTY ❌")  # 🔥 Debug print
-            return  # ✅ No actions to undo
+            print("UNDO STACK EMPTY âŒ")  # ðŸ”¥ Debug print
+            return  # âœ… No actions to undo
 
-        print("UNDO TRIGGERED ✅")  # 🔥 Debug print
+        print("UNDO TRIGGERED âœ…")  # ðŸ”¥ Debug print
         last_action = self.undo_stack.pop()
 
         for row, col, old_char in last_action:
-            self.grid[row, col] = ord(old_char)  # ✅ Restore old value
+            self.grid[row, col] = ord(old_char)  # âœ… Restore old value
             self.redraw_cell(row, col)
 
         self.update_selection()
@@ -1965,7 +2025,7 @@ class TextGridEditor:
         self.select_spaces_only = not self.select_spaces_only
         status = "ON" if self.select_spaces_only else "OFF"
         
-        # **✅ IMMEDIATE CLEANUP WHEN TURNING ON SPACE-ONLY MODE**
+        # **âœ… IMMEDIATE CLEANUP WHEN TURNING ON SPACE-ONLY MODE**
         if self.select_spaces_only and self.selected_cells:
             valid_selections = set()
             removed_count = 0
@@ -1979,15 +2039,15 @@ class TextGridEditor:
                         removed_count += 1
             
             self.selected_cells = valid_selections
-            print(f"🔄 FILTERED: Removed {removed_count} non-space selections")
+            print(f"ðŸ”„ FILTERED: Removed {removed_count} non-space selections")
         
-        # **✅ CLEAR ALL VISUAL ARTIFACTS AND REDRAW**
+        # **âœ… CLEAR ALL VISUAL ARTIFACTS AND REDRAW**
         self.canvas.delete('selection')
         self.canvas.delete('hover_preview')
         self.update_selection()
         
         self.debug_label.config(text=f"Space-Only Selection: {status}")
-        print(f"🎯 SPACE-ONLY MODE: {status}")
+        print(f"ðŸŽ¯ SPACE-ONLY MODE: {status}")
         
         return 'break'
 
@@ -1995,13 +2055,13 @@ class TextGridEditor:
         """Enhanced cleanup that removes stray objects and invalid colors."""
         try:
             if not hasattr(self, 'canvas_objects') or len(self.canvas_objects) < 1000:
-                # **✅ EVEN FOR SMALL CLEANUP, REMOVE STRAY COLORED OBJECTS**
+                # **âœ… EVEN FOR SMALL CLEANUP, REMOVE STRAY COLORED OBJECTS**
                 self.remove_stray_colored_objects()
                 return
             
-            print(f"🧹 Enhanced cleanup. Current count: {len(self.canvas_objects)}")
+            print(f"ðŸ§¹ Enhanced cleanup. Current count: {len(self.canvas_objects)}")
             
-            # **✅ REMOVE STRAY COLORED OBJECTS FIRST**
+            # **âœ… REMOVE STRAY COLORED OBJECTS FIRST**
             self.remove_stray_colored_objects()
             
             # Continue with normal cleanup...
@@ -2034,10 +2094,10 @@ class TextGridEditor:
                 if key in self.canvas_objects:
                     del self.canvas_objects[key]
             
-            print(f"✅ Enhanced cleanup complete. Removed {removed_count} objects. Remaining: {len(self.canvas_objects)}")
+            print(f"âœ… Enhanced cleanup complete. Removed {removed_count} objects. Remaining: {len(self.canvas_objects)}")
             
         except Exception as e:
-            print(f"❌ Enhanced cleanup error: {e}")
+            print(f"âŒ Enhanced cleanup error: {e}")
             self.canvas_operation_count = 0
 
     def remove_stray_colored_objects(self):
@@ -2048,18 +2108,18 @@ class TextGridEditor:
             
             for item in all_items:
                 try:
-                    # **✅ CHECK FOR INVALID COLORS**
+                    # **âœ… CHECK FOR INVALID COLORS**
                     fill = self.canvas.itemcget(item, 'fill')
                     outline = self.canvas.itemcget(item, 'outline')
                     
-                    # **✅ REMOVE OBJECTS WITH ERROR COLORS**
+                    # **âœ… REMOVE OBJECTS WITH ERROR COLORS**
                     invalid_colors = ['red', 'gray', 'grey', 'pink', 'purple']
                     if (fill in invalid_colors or outline in invalid_colors):
                         self.canvas.delete(item)
                         removed_count += 1
                         continue
                     
-                    # **✅ CHECK FOR OBJECTS OUTSIDE VALID GRID AREA**
+                    # **âœ… CHECK FOR OBJECTS OUTSIDE VALID GRID AREA**
                     coords = self.canvas.coords(item)
                     if len(coords) >= 4:
                         x1, y1 = coords[0], coords[1]
@@ -2067,14 +2127,14 @@ class TextGridEditor:
                         grid_col = int(x1 // self.cell_width) if self.cell_width > 0 else -1
                         grid_row = int(y1 // self.cell_height) if self.cell_height > 0 else -1
                         
-                        # **✅ REMOVE OBJECTS OUTSIDE GRID BOUNDS**
+                        # **âœ… REMOVE OBJECTS OUTSIDE GRID BOUNDS**
                         if (grid_row < 0 or grid_row >= self.rows or 
                             grid_col < 0 or grid_col >= self.cols):
                             self.canvas.delete(item)
                             removed_count += 1
                             continue
                         
-                        # **✅ REMOVE OBJECTS WITH INVALID COORDINATES**
+                        # **âœ… REMOVE OBJECTS WITH INVALID COORDINATES**
                         if (x1 < -100 or y1 < -100 or 
                             x1 > self.cols * self.cell_width + 100 or 
                             y1 > self.rows * self.cell_height + 100):
@@ -2091,10 +2151,10 @@ class TextGridEditor:
                         pass
             
             if removed_count > 0:
-                print(f"🧹 REMOVED {removed_count} stray colored/invalid objects")
+                print(f"ðŸ§¹ REMOVED {removed_count} stray colored/invalid objects")
                 
         except Exception as e:
-            print(f"❌ Error removing stray objects: {e}")
+            print(f"âŒ Error removing stray objects: {e}")
 
     def update_selection(self):
         """Enhanced selection update with space-only mode colors."""
@@ -2151,7 +2211,7 @@ class TextGridEditor:
                 y2 = y1 + self.cell_height
                 self.canvas.create_rectangle(x1, y1, x2, y2, outline=outline_color, tags='selection')
 
-        print(f"🔄 SELECTION UPDATE: {len(visible_selected)} cells, color: {outline_color}")
+        print(f"ðŸ”„ SELECTION UPDATE: {len(visible_selected)} cells, color: {outline_color}")
 
     def _update_selection_deferred(self):
         """Heavy selection update - only when not actively painting."""
@@ -2228,15 +2288,15 @@ class TextGridEditor:
                 old_char = chr(self.grid[row, col])
                 new_char = self.apply_extra_spaces_to_char(char)
                 if old_char != new_char:
-                    undo_action.append((row, col, old_char))  # ✅ Store only changed cells
+                    undo_action.append((row, col, old_char))  # âœ… Store only changed cells
                     self.grid[row, col] = ord(new_char)
                     self.redraw_cell(row, col)
 
         if undo_action:
-            self.undo_stack.append(undo_action)  # ✅ Add to undo stack
-            print(f"UNDO STACK UPDATED: {len(self.undo_stack)} actions stored.")  # 🔥 Debug print
+            self.undo_stack.append(undo_action)  # âœ… Add to undo stack
+            print(f"UNDO STACK UPDATED: {len(self.undo_stack)} actions stored.")  # ðŸ”¥ Debug print
             if len(self.undo_stack) > self.max_undo:
-                self.undo_stack.pop(0)  # ✅ Limit stack size to prevent memory issues
+                self.undo_stack.pop(0)  # âœ… Limit stack size to prevent memory issues
 
         self.update_selection()
 
@@ -2423,6 +2483,8 @@ class TextGridEditor:
         adjacency_threshold=2,
         min_region_size=18,
         corona_radius=1,
+        type_radius=3,
+        include_adjacent_filled=False,
         replace_selection=False
     ):
         if self.grid is None or self.rows == 0 or self.cols == 0:
@@ -2435,13 +2497,30 @@ class TextGridEditor:
             self.smart_select_pending = {
                 "mode": "path_corona",
                 "corona_radius": max(1, int(corona_radius)),
+                "include_adjacent_filled": bool(include_adjacent_filled),
+                "replace_selection": False,
+            }
+            include_note = " + adjacent filled" if self.smart_select_pending["include_adjacent_filled"] else ""
+            self.debug_label.config(
+                text=(
+                    "Smart Select armed: Path Corona Blank "
+                    f"(radius {self.smart_select_pending['corona_radius']}{include_note}). "
+                    "Click a blank cell touching filled terrain. (adds to selection)"
+                )
+            )
+            return
+
+        if mode == "type_radius":
+            self.smart_select_pending = {
+                "mode": "type_radius",
+                "type_radius": max(1, int(type_radius)),
                 "replace_selection": False,
             }
             self.debug_label.config(
                 text=(
-                    "Smart Select armed: Path Corona Blank "
-                    f"(radius {self.smart_select_pending['corona_radius']}). "
-                    "Click a blank cell touching filled terrain. (adds to selection)"
+                    "Smart Select armed: Similar Type Radius "
+                    f"(radius {self.smart_select_pending['type_radius']}). "
+                    "Click a populated cell. (adds to selection)"
                 )
             )
             return
@@ -2528,6 +2607,28 @@ class TextGridEditor:
             replace_selection=False,
         )
 
+    def arm_smart_select_type_radius_custom(self):
+        if self.grid is None:
+            messagebox.showwarning("No Map", "Load a map first.")
+            return
+
+        max_radius = max(1, max(self.rows, self.cols))
+        type_radius = simpledialog.askinteger(
+            "Type Radius",
+            "Same-type radius (cells):",
+            initialvalue=3,
+            minvalue=1,
+            maxvalue=max_radius
+        )
+        if type_radius is None:
+            return
+
+        self.arm_smart_select(
+            mode="type_radius",
+            type_radius=type_radius,
+            replace_selection=False,
+        )
+
     def _compute_smart_select_mask(self, seed_row, seed_col, min_run, adjacency_threshold):
         blank_mask = self._compute_blank_mask()
         if blank_mask is None:
@@ -2581,7 +2682,7 @@ class TextGridEditor:
 
         return fill_mask, None
 
-    def _compute_path_corona_mask(self, seed_row, seed_col, corona_radius=1):
+    def _compute_path_corona_mask(self, seed_row, seed_col, corona_radius=1, include_adjacent_filled=False):
         blank_mask = self._compute_blank_mask()
         if blank_mask is None:
             return None, "No grid loaded."
@@ -2657,7 +2758,45 @@ class TextGridEditor:
             selection_mask |= new_layer
             frontier_mask = new_layer
 
+        if include_adjacent_filled:
+            touch_selection = self._count_neighbors(selection_mask, include_diagonal=True) >= 1
+            adjacent_filled_mask = target_filled & touch_selection
+            selection_mask |= adjacent_filled_mask
+
         return selection_mask, None
+
+    def _compute_same_type_radius_mask(self, seed_row, seed_col, type_radius=3):
+        if self.grid is None:
+            return None, None, "No grid loaded."
+
+        target_ord = int(self.grid[seed_row, seed_col])
+        target_char = chr(target_ord)
+        if target_char.isspace():
+            return None, None, "Type Radius starts on a populated (non-space) cell."
+
+        same_mask = (self.grid == target_ord)
+        seed_component = self._flood_fill_component_mask(
+            same_mask,
+            seed_row,
+            seed_col,
+            include_diagonal=True
+        )
+        if not np.any(seed_component):
+            return None, None, "No matching type component found at click location."
+
+        type_radius = max(1, int(type_radius))
+        selection_mask = seed_component.copy()
+        frontier_mask = seed_component.copy()
+
+        for _ in range(type_radius):
+            neighbor_touch = self._count_neighbors(frontier_mask, include_diagonal=True) >= 1
+            new_layer = same_mask & (~selection_mask) & neighbor_touch
+            if not np.any(new_layer):
+                break
+            selection_mask |= new_layer
+            frontier_mask = new_layer
+
+        return selection_mask, target_char, None
 
     def smart_select_at(
         self,
@@ -2668,6 +2807,8 @@ class TextGridEditor:
         adjacency_threshold=2,
         min_region_size=18,
         corona_radius=1,
+        type_radius=3,
+        include_adjacent_filled=False,
         replace_selection=False
     ):
         if self.grid is None or self.rows == 0 or self.cols == 0:
@@ -2683,12 +2824,22 @@ class TextGridEditor:
         adjacency_threshold = max(1, min(8, int(adjacency_threshold)))
         min_region_size = max(1, int(min_region_size))
         corona_radius = max(1, int(corona_radius))
+        type_radius = max(1, int(type_radius))
+        include_adjacent_filled = bool(include_adjacent_filled)
+        selected_type_char = None
 
         if mode == "path_corona":
             fill_mask, error = self._compute_path_corona_mask(
                 seed_row=row,
                 seed_col=col,
                 corona_radius=corona_radius,
+                include_adjacent_filled=include_adjacent_filled,
+            )
+        elif mode == "type_radius":
+            fill_mask, selected_type_char, error = self._compute_same_type_radius_mask(
+                seed_row=row,
+                seed_col=col,
+                type_radius=type_radius,
             )
         else:
             fill_mask, error = self._compute_smart_select_mask(
@@ -2718,15 +2869,27 @@ class TextGridEditor:
         self.canvas.delete('selection')
         self.update_selection()
         if mode == "path_corona":
+            include_note = " + adjacent filled" if include_adjacent_filled else ""
             self.debug_label.config(
                 text=(
                     "Smart Select Path Corona complete: "
-                    f"{selected_count} blank cells (radius {corona_radius})."
+                    f"{selected_count} cells (radius {corona_radius}{include_note})."
                 )
             )
             print(
                 f"Smart Select Path Corona complete at ({row}, {col}): selected={selected_count}, "
-                f"radius={corona_radius}, blank_only=True, append=True"
+                f"radius={corona_radius}, include_adjacent_filled={include_adjacent_filled}, append=True"
+            )
+        elif mode == "type_radius":
+            self.debug_label.config(
+                text=(
+                    f"Smart Select Type Radius complete: {selected_count} '{selected_type_char}' cells "
+                    f"(radius {type_radius})."
+                )
+            )
+            print(
+                f"Smart Select Type Radius complete at ({row}, {col}): selected={selected_count}, "
+                f"char='{selected_type_char}', radius={type_radius}, append=True"
             )
         else:
             self.debug_label.config(
@@ -2766,20 +2929,163 @@ class TextGridEditor:
             return char
         return ' ' if random.random() < chance else char
 
-    def _generate_dry_crack_mask(self, width, height, mode="random"):
+    def _generate_random_fork_region_mask(self, width, height):
+        """Build multiple fork-friendly dry patches instead of one merged blob."""
+        region_mask = np.zeros((height, width), dtype=bool)
+        area = width * height
+        if area <= 0:
+            return region_mask
+
+        patch_count = max(6, min(260, int(area * 0.0038)))
+        min_r = max(3, int(min(width, height) * 0.06))
+        max_r = max(min_r + 2, int(min(width, height) * 0.16))
+
+        yy, xx = np.indices((height, width))
+
+        for _ in range(patch_count):
+            cx = random.randint(0, width - 1)
+            cy = random.randint(0, height - 1)
+            rx = random.randint(min_r, max_r)
+            ry = random.randint(min_r, max_r)
+            patch = (((xx - cx) / max(1, rx)) ** 2 + ((yy - cy) / max(1, ry)) ** 2) <= 1.0
+            # Ragged patch edge so regions are natural and not perfect circles.
+            if random.random() < 0.7:
+                jitter = np.random.random((height, width)) > 0.14
+                patch &= jitter
+            region_mask |= patch
+
+        # Light cleanup: keep coherent patch interiors, avoid tiny speckles.
+        mask_i = region_mask.astype(np.uint8)
+        p = np.pad(mask_i, 1, mode='edge')
+        neighbors = (
+            p[:-2, :-2] + p[:-2, 1:-1] + p[:-2, 2:] +
+            p[1:-1, :-2] + p[1:-1, 1:-1] + p[1:-1, 2:] +
+            p[2:, :-2] + p[2:, 1:-1] + p[2:, 2:]
+        )
+        region_mask = neighbors >= 3
+
+        return region_mask
+
+    def _generate_random_forks_crack_mask(self, width, height, region_mask=None):
+        """Generate many thin, longer fork paths with less blob-like spread."""
+        crack_mask = np.zeros((height, width), dtype=bool)
+        area = width * height
+        if area <= 0:
+            return crack_mask
+
+        if region_mask is not None:
+            region_mask = np.asarray(region_mask, dtype=bool)
+            if region_mask.shape != (height, width) or not region_mask.any():
+                region_mask = None
+
+        if region_mask is not None:
+            allowed_points = np.argwhere(region_mask)
+        else:
+            allowed_points = np.argwhere(np.ones((height, width), dtype=bool))
+
+        if allowed_points.size == 0:
+            return crack_mask
+
+        start_count = max(12, min(420, int(area * 0.0105)))
+        min_len = max(10, int(min(width, height) * 0.28))
+        max_len = max(min_len + 8, int(min(width, height) * 0.72))
+        max_carved = min(max(120, int(area * 0.23)), 90000)
+        carved = 0
+
+        directions = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1),           (0, 1),
+            (1, -1),  (1, 0),  (1, 1),
+        ]
+
+        starts = []
+        for _ in range(start_count * 3):
+            if len(starts) >= start_count:
+                break
+            ay, ax = allowed_points[random.randrange(len(allowed_points))]
+            y = int(ay)
+            x = int(ax)
+            y0 = max(0, y - 2)
+            y1 = min(height, y + 3)
+            x0 = max(0, x - 2)
+            x1 = min(width, x + 3)
+            if np.any(crack_mask[y0:y1, x0:x1]):
+                continue
+            starts.append((x, y))
+
+        branches = []
+        for x, y in starts:
+            dx, dy = random.choice(directions)
+            branches.append([x, y, dx, dy, random.randint(min_len, max_len)])
+
+        while branches and carved < max_carved:
+            x, y, dx, dy, steps = branches.pop()
+            for step_idx in range(steps):
+                if not (0 <= x < width and 0 <= y < height):
+                    break
+                if region_mask is not None and not region_mask[y, x]:
+                    break
+
+                if not crack_mask[y, x]:
+                    crack_mask[y, x] = True
+                    carved += 1
+                    if carved >= max_carved:
+                        break
+
+                remain = steps - step_idx
+                if remain > 8 and random.random() < 0.18:
+                    ndx, ndy = random.choice(directions)
+                    child_len = max(6, int(remain * random.uniform(0.42, 0.75)))
+                    branches.append([x, y, ndx, ndy, child_len])
+
+                if random.random() < 0.22:
+                    ndx, ndy = random.choice(directions)
+                    if (ndx, ndy) != (0, 0):
+                        dx, dy = ndx, ndy
+
+                x += dx
+                y += dy
+
+                if random.random() < 0.08:
+                    x += random.choice([-1, 0, 1])
+                    y += random.choice([-1, 0, 1])
+
+        return crack_mask
+
+    def _generate_dry_crack_mask(
+        self,
+        width,
+        height,
+        mode="random",
+        allowed_mask=None,
+        density_scale=1.0,
+        length_scale=1.0,
+        carve_scale=1.0
+    ):
         """Create branching crack paths for dry terrain."""
         crack_mask = np.zeros((height, width), dtype=bool)
         area = width * height
         if area <= 0:
             return crack_mask
 
+        if allowed_mask is not None:
+            allowed_mask = np.asarray(allowed_mask, dtype=bool)
+            if allowed_mask.shape != (height, width):
+                allowed_mask = None
+            elif not allowed_mask.any():
+                return crack_mask
+
+        if allowed_mask is not None and mode in ("radiate", "converge"):
+            # Allowed-region carving is path-based random mode only.
+            mode = "random"
+
         if mode in ("radiate", "converge"):
             center_x = (width - 1) / 2.0
             center_y = (height - 1) / 2.0
-            start_count = max(8, int(math.sqrt(area) * 0.65))
-            min_len = max(14, int(min(width, height) * 0.7))
-            max_len = max(min_len + 12, int((width + height) * 1.1))
-            max_carved = max(40, int(area * 0.2))
+            start_count = max(8, min(320, int(math.sqrt(area) * 0.42)))
+            min_len = min(max(12, int(min(width, height) * 0.5)), 120)
+            max_len = max(min_len, min(max(min_len + 10, int((width + height) * 0.55)), 210))
+            max_carved = min(max(40, int(area * 0.085)), 38000)
             carved = 0
 
             branches = []
@@ -2845,26 +3151,45 @@ class TextGridEditor:
 
             return crack_mask
 
-        start_count = max(3, int(area * 0.0035))
-        min_len = max(10, int(min(width, height) * 0.6))
-        max_len = max(min_len + 8, int((width + height) * 0.9))
+        start_count = max(3, min(420, int(area * 0.0013 * max(0.25, density_scale))))
+        min_len = min(max(8, int(min(width, height) * 0.45 * max(0.6, length_scale))), 110)
+        max_len = max(
+            min_len,
+            min(
+                max(min_len + 8, int((width + height) * 0.5 * max(0.6, length_scale))),
+                220
+            )
+        )
         directions = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+        allowed_points = None
+        if allowed_mask is not None:
+            allowed_points = np.argwhere(allowed_mask)
+            if allowed_points.size == 0:
+                return crack_mask
 
         branches = []
         for _ in range(start_count):
-            x = random.randint(0, width - 1)
-            y = random.randint(0, height - 1)
+            if allowed_points is not None:
+                ay, ax = allowed_points[random.randrange(len(allowed_points))]
+                x = int(ax)
+                y = int(ay)
+            else:
+                x = random.randint(0, width - 1)
+                y = random.randint(0, height - 1)
             dx, dy = random.choice(directions)
             length = random.randint(min_len, max_len)
             branches.append([x, y, dx, dy, length])
 
-        max_carved = max(30, int(area * 0.16))
+        max_carved = min(max(24, int(area * 0.055 * max(0.25, carve_scale))), 52000)
         carved = 0
 
         while branches and carved < max_carved:
             x, y, dx, dy, steps = branches.pop()
             for _ in range(steps):
                 if not (0 <= x < width and 0 <= y < height):
+                    break
+                if allowed_mask is not None and (not allowed_mask[y, x]):
                     break
 
                 if not crack_mask[y, x]:
@@ -2875,7 +3200,11 @@ class TextGridEditor:
 
                 if random.random() < 0.18:
                     sx, sy = x + dy, y + dx
-                    if 0 <= sx < width and 0 <= sy < height and not crack_mask[sy, sx]:
+                    if (
+                        0 <= sx < width and 0 <= sy < height and
+                        (allowed_mask is None or allowed_mask[sy, sx]) and
+                        not crack_mask[sy, sx]
+                    ):
                         crack_mask[sy, sx] = True
                         carved += 1
                         if carved >= max_carved:
@@ -2891,58 +3220,20 @@ class TextGridEditor:
 
                 x += dx
                 y += dy
+                if allowed_mask is not None and (0 <= x < width and 0 <= y < height):
+                    if not allowed_mask[y, x]:
+                        break
 
                 if random.random() < 0.2:
-                    x += random.choice([-1, 0, 1])
-                    y += random.choice([-1, 0, 1])
+                    nx = x + random.choice([-1, 0, 1])
+                    ny = y + random.choice([-1, 0, 1])
+                    if 0 <= nx < width and 0 <= ny < height:
+                        if allowed_mask is None or allowed_mask[ny, nx]:
+                            x, y = nx, ny
 
         return crack_mask
 
     def generate_biome(self, biome_type, shape_type):
-        print(f"Generating biome: {biome_type}, Shape: {shape_type}")
-
-        # 🔍 Debugging: Check if selected_cells is truly populated
-        print(f"Selected Cells (count: {len(self.selected_cells)}): {self.selected_cells}")
-
-        if not self.selected_cells:
-            messagebox.showwarning("No Selection", "Please select an area first.")
-            return
-
-        try:
-            # ✅ Extract valid row and column lists before calling min/max
-            selected_rows = [row for row, _ in self.selected_cells]
-            selected_cols = [col for _, col in self.selected_cells]
-
-            # ✅ Debugging output to ensure correct values
-            print(f"Selected Rows: {selected_rows}")
-            print(f"Selected Cols: {selected_cols}")
-
-            min_row = min(selected_rows) if selected_rows else 0
-            max_row = max(selected_rows) if selected_rows else 0
-            min_col = min(selected_cols) if selected_cols else 0
-            max_col = max(selected_cols) if selected_cols else 0
-
-            print(f"Selection Bounds: ({min_row}, {min_col}) to ({max_row}, {max_col})")  # 🔍 Debugging
-        except ValueError:
-            messagebox.showerror("Error", "Invalid selection area. Try selecting a valid region.")
-            return
-
-
-
-        width, height = max_col - min_col + 1, max_row - min_row + 1
-        randomness = self.randomness.get() / 100
-
-        # Get numeric shape mask (values from 0 to 1)
-        shape_func = SHAPE_GENERATORS[shape_type]
-        shape_mask = shape_func(width, height)
-
-        # Assign terrain characters based on shape mask values
-        biome_map = [[None for _ in range(width)] for _ in range(height)]
-
-
-        print(f"Available biomes: {list(BIOME_PROFILES.keys())}")
-        print(f"Available shapes: {list(SHAPE_GENERATORS.keys())}")
-
         if not self.selected_cells:
             messagebox.showwarning("No Selection", "Please select an area first.")
             return
@@ -2951,181 +3242,173 @@ class TextGridEditor:
             messagebox.showerror("Error", f"Invalid biome ({biome_type}) or shape ({shape_type})")
             return
 
+        selected_cells = tuple(self.selected_cells)
+        selected_rows = [row for row, _ in selected_cells]
+        selected_cols = [col for _, col in selected_cells]
 
-        if not self.selected_cells:
-            messagebox.showwarning("No Selection", "Please select an area first.")
-            return
+        min_row = min(selected_rows)
+        max_row = max(selected_rows)
+        min_col = min(selected_cols)
+        max_col = max(selected_cols)
 
-        if biome_type not in BIOME_PROFILES or shape_type not in SHAPE_GENERATORS:
-            messagebox.showerror("Error", f"Invalid biome ({biome_type}) or shape ({shape_type})")
-            return
+        width = max_col - min_col + 1
+        height = max_row - min_row + 1
+        randomness = self.randomness.get() / 100.0
+        extra_space_chance = max(0.0, min(1.0, self.extra_spaces.get() / 100.0))
 
-        profile = BIOME_PROFILES[biome_type]
-        shape_func = SHAPE_GENERATORS[shape_type]
-        print(f"Selected Cells: {self.selected_cells}")  # DEBUGGING: Check selected cells
+        shape_mask = SHAPE_GENERATORS[shape_type](width, height)
 
-        try:
-            # ✅ Extract valid row and column lists before calling min/max
-            selected_rows = [row for row, _ in self.selected_cells]
-            selected_cols = [col for _, col in self.selected_cells]
-
-            # ✅ Debugging output to ensure correct values
-            print(f"Selected Rows: {selected_rows}")
-            print(f"Selected Cols: {selected_cols}")
-
-            min_row = min(selected_rows) if selected_rows else 0
-            max_row = max(selected_rows) if selected_rows else 0
-            min_col = min(selected_cols) if selected_cols else 0
-            max_col = max(selected_cols) if selected_cols else 0
-
-            print(f"Selection Bounds: ({min_row}, {min_col}) to ({max_row}, {max_col})")  # 🔍 Debugging
-        except ValueError:
-            messagebox.showerror("Error", "Invalid selection area. Try selecting a valid region.")
-            return
-
-
-        width, height = max_col - min_col + 1, max_row - min_row + 1
-        randomness = self.randomness.get() / 100
-
-        # Get numeric shape mask (values from 0 to 1)
-        shape_mask = shape_func(width, height)
-
-        # Assign terrain characters based on shape mask values
-        biome_map = [[None for _ in range(width)] for _ in range(height)]
-
-        for y in range(height):
-            for x in range(width):
-                mask_value = shape_mask[y][x]  # Get numeric shape value (0 = deep water, 1 = land)
-
-                # **Forest Mapping**
-                if biome_type == "forest":
-                    if mask_value < 0.2:
-                        base_char = '.'  # Grass
-                        adjacent_chars = ['.', 'f']
-                    elif mask_value < 0.5:
-                        base_char = 'f'  # Sparse trees
-                        adjacent_chars = ['.', 'f', 'F']
-                    elif mask_value < 1.0:
-                        base_char = 'F'  # Dense trees
-                        adjacent_chars = ['f', 'F']
-                    else:
-                        base_char = '.'  # Default fallback for safety
-                        adjacent_chars = ['.', 'f', 'F']
-
-                # **Grasslands Mapping**
-                elif biome_type == "grasslands":
-                    # Keep grasslands mostly '.' with some ',' and only occasional 'f',
-                    # independent of shape spikes (e.g. spotty often returns ~1.0).
-                    if mask_value < 0.68:
-                        base_char = '.'
-                        adjacent_chars = ['.', '.', '.', '.', ',', ',']
-                    else:
-                        base_char = ','
-                        adjacent_chars = ['.', '.', ',', ',', ',']
-
-                    # Very rare tree chance, slightly higher in denser mask zones.
-                    tree_chance = 0.012 + max(0.0, mask_value - 0.75) * 0.03
-                    if random.random() < min(0.04, tree_chance):
-                        base_char = 'f'
-                        adjacent_chars = ['.', ',', 'f']
-
-                # **Swamp Mapping**
-                elif biome_type == "swamp":
-                    if mask_value < 0.2:
-                        base_char = 'W'  # Deep water
-                        adjacent_chars = ['W', 'w']
-                    elif mask_value < 0.5:
-                        base_char = 'w'  # Shallow water
-                        adjacent_chars = ['W', 'w', '.']
-                    elif mask_value < 1.0:
-                        base_char = '.'  # Muddy land
-                        adjacent_chars = ['w', '.', 'f']
-                    else:
-                        base_char = '.'  # Sparse trees
-                        adjacent_chars = ['.', 'f']
-
-                # **Sand Mapping**
-                elif biome_type == "sand":
-                    if mask_value < 0.2:
-                        base_char = ','  # Light sand
-                        adjacent_chars = [',', '`']
-                    elif mask_value < 0.5:
-                        base_char = 'z'  # Small dunes
-                        adjacent_chars = [',', 'z']
-                    elif mask_value < 0.8:
-                        base_char = 'd'  # Taller dunes
-                        adjacent_chars = ['z', 'd']
-                    else:
-                        base_char = 'D'  # High plateaus
-                        adjacent_chars = ['d', 'D']
-
-                # **Dry Sand Mapping**
-                elif biome_type == "dry_sand":
-                    if mask_value < 0.3:
-                        base_char = ' '
-                        adjacent_chars = [' ', '.', ',']
-                    elif mask_value < 0.6:
-                        base_char = '.'
-                        adjacent_chars = [' ', '.', ',']
-                    elif mask_value < 0.9:
-                        base_char = ','
-                        adjacent_chars = [' ', '.', ',', 'd']
-                    else:
-                        base_char = ' '
-                        adjacent_chars = [' ', '.', ',']
-
-                # **🔧 Prevent Undefined `base_char` Errors**
-                else:
-                    base_char = '.'  # Default fallback for unknown biomes
-                    adjacent_chars = ['.']
-
-                # **Apply randomness for blending**
-                if random.random() < randomness:
-                    biome_map[y][x] = random.choice(adjacent_chars)
-                else:
-                    biome_map[y][x] = base_char
-
+        crack_mask = None
+        fork_region_mask = None
         if biome_type == "dry_sand":
             crack_mode = "random"
             if shape_type == "explosion":
                 crack_mode = "radiate"
             elif shape_type == "implosion":
                 crack_mode = "converge"
+            if shape_type == "random_forks":
+                fork_region_mask = self._generate_random_fork_region_mask(width, height)
+                crack_mask = self._generate_random_forks_crack_mask(
+                    width,
+                    height,
+                    region_mask=fork_region_mask
+                )
+            else:
+                crack_mask = self._generate_dry_crack_mask(width, height, mode=crack_mode)
 
-            crack_mask = self._generate_dry_crack_mask(width, height, mode=crack_mode)
-            for y in range(height):
-                for x in range(width):
-                    if crack_mask[y, x]:
-                        biome_map[y][x] = 'd' if random.random() < 0.82 else 'D'
-                    elif biome_map[y][x] == ' ' and random.random() < (0.06 + randomness * 0.25):
-                        biome_map[y][x] = random.choice(['.', ','])
-
-        # Apply biome changes to grid
         undo_action = []
-        for i, row in enumerate(range(min_row, max_row + 1)):
-            for j, col in enumerate(range(min_col, max_col + 1)):
-                if (row, col) in self.selected_cells:
-                    old_char = chr(self.grid[row, col])
-                    new_char = self.apply_extra_spaces_to_char(biome_map[i][j])
-                    if old_char != new_char:
-                        undo_action.append((row, col, old_char))  # 🔥 Store previous state
-                        self.grid[row, col] = ord(new_char)
-                        self.redraw_cell(row, col)
+        visible_changes = []
+        rand = random.random
+        choice = random.choice
 
-        # ✅ DEBUG: Check if undo_action has changes
-        print(f"UNDO_ACTION SIZE: {len(undo_action)}")
+        for row, col in selected_cells:
+            local_row = row - min_row
+            local_col = col - min_col
+            mask_value = float(shape_mask[local_row][local_col])
+
+            if biome_type == "forest":
+                if mask_value < 0.2:
+                    base_char = '.'
+                    adjacent_chars = ['.', 'f']
+                elif mask_value < 0.5:
+                    base_char = 'f'
+                    adjacent_chars = ['.', 'f', 'F']
+                else:
+                    base_char = 'F'
+                    adjacent_chars = ['f', 'F']
+
+            elif biome_type == "grasslands":
+                if mask_value < 0.68:
+                    base_char = '.'
+                    adjacent_chars = ['.', '.', '.', '.', ',', ',']
+                else:
+                    base_char = ','
+                    adjacent_chars = ['.', '.', ',', ',', ',']
+
+                tree_chance = 0.012 + max(0.0, mask_value - 0.75) * 0.03
+                if rand() < min(0.04, tree_chance):
+                    base_char = 'f'
+                    adjacent_chars = ['.', ',', 'f']
+
+            elif biome_type == "swamp":
+                if mask_value < 0.2:
+                    base_char = 'W'
+                    adjacent_chars = ['W', 'w']
+                elif mask_value < 0.5:
+                    base_char = 'w'
+                    adjacent_chars = ['W', 'w', '.']
+                elif mask_value < 1.0:
+                    base_char = '.'
+                    adjacent_chars = ['w', '.', 'f']
+                else:
+                    base_char = '.'
+                    adjacent_chars = ['.', 'f']
+
+            elif biome_type == "sand":
+                if mask_value < 0.2:
+                    base_char = ','
+                    adjacent_chars = [',', '`']
+                elif mask_value < 0.5:
+                    base_char = 'z'
+                    adjacent_chars = [',', 'z']
+                elif mask_value < 0.8:
+                    base_char = 'd'
+                    adjacent_chars = ['z', 'd']
+                else:
+                    base_char = 'D'
+                    adjacent_chars = ['d', 'D']
+
+            elif biome_type == "dry_sand":
+                if shape_type == "random_forks":
+                    in_fork_region = fork_region_mask[local_row, local_col] if fork_region_mask is not None else False
+                    if in_fork_region:
+                        if mask_value < 0.44:
+                            base_char = '.'
+                            adjacent_chars = ['.', '.', ',', ',']
+                        elif mask_value < 0.82:
+                            base_char = ','
+                            adjacent_chars = ['.', ',', ',', ' ']
+                        else:
+                            base_char = ' '
+                            adjacent_chars = [' ', '.', ',']
+                    elif mask_value < 0.32:
+                        base_char = ' '
+                        adjacent_chars = [' ', ' ', '.', ',']
+                    elif mask_value < 0.72:
+                        base_char = '.'
+                        adjacent_chars = [' ', '.', '.', ',']
+                    else:
+                        base_char = ','
+                        adjacent_chars = [' ', '.', ',', ',']
+                elif mask_value < 0.3:
+                    base_char = ' '
+                    adjacent_chars = [' ', '.', ',']
+                elif mask_value < 0.6:
+                    base_char = '.'
+                    adjacent_chars = [' ', '.', ',']
+                elif mask_value < 0.9:
+                    base_char = ','
+                    adjacent_chars = [' ', '.', ',', 'd']
+                else:
+                    base_char = ' '
+                    adjacent_chars = [' ', '.', ',']
+
+            else:
+                base_char = '.'
+                adjacent_chars = ['.']
+
+            new_char = choice(adjacent_chars) if rand() < randomness else base_char
+
+            if biome_type == "dry_sand":
+                if crack_mask[local_row, local_col]:
+                    new_char = 'd' if rand() < 0.82 else 'D'
+                elif new_char == ' ' and rand() < (0.06 + randomness * 0.25):
+                    new_char = choice(['.', ','])
+
+            if new_char != ' ' and extra_space_chance > 0.0 and rand() < extra_space_chance:
+                new_char = ' '
+
+            old_char = chr(self.grid[row, col])
+            if old_char != new_char:
+                undo_action.append((row, col, old_char))
+                self.grid[row, col] = ord(new_char)
+                if (row, col) in self.previous_visible_range:
+                    visible_changes.append((row, col))
 
         if undo_action:
             self.undo_stack.append(undo_action)
-            print(f"✅ UNDO STACK UPDATED: {len(self.undo_stack)} actions stored.")
             if len(self.undo_stack) > self.max_undo:
-                self.undo_stack.pop(0)  # ✅ Keep the stack from growing too large
-        else:
-            print("❌ No changes detected, undo action skipped.")
+                self.undo_stack.pop(0)
 
+        if visible_changes:
+            if len(visible_changes) > 2000:
+                self._redraw_visible_cells_force_complete()
+            else:
+                for row, col in visible_changes:
+                    char = chr(self.grid[row, col])
+                    color = self.get_char_color(char)
+                    self.update_canvas_object(row, col, char, color)
 
-
-        print("Biome generation complete.")
         self.update_selection()
 
 
@@ -3172,23 +3455,23 @@ class TextGridEditor:
     
     def enter_performance_mode(self):
         """Modified performance mode that doesn't completely disable visuals."""
-        print("🚀 ENTERING PERFORMANCE MODE")
+        print("ðŸš€ ENTERING PERFORMANCE MODE")
         
-        # **✅ REDUCE EXPENSIVE FEATURES BUT KEEP BASIC VISUALS**
+        # **âœ… REDUCE EXPENSIVE FEATURES BUT KEEP BASIC VISUALS**
         self._performance_mode = True
         
-        # **✅ DON'T CLEAR SELECTION VISUALS - KEEP PAINTING RESPONSIVE**
+        # **âœ… DON'T CLEAR SELECTION VISUALS - KEEP PAINTING RESPONSIVE**
         # Just mark that we're in performance mode for other optimizations
         
         self.debug_label.config(text="Performance Mode: Large selection - optimized rendering")
 
     def exit_performance_mode(self):
         """Exit performance mode and restore normal operation."""
-        print("🏁 EXITING PERFORMANCE MODE")
+        print("ðŸ EXITING PERFORMANCE MODE")
         
         self._performance_mode = False
         
-        # **✅ ENSURE SELECTION IS PROPERLY VISIBLE**
+        # **âœ… ENSURE SELECTION IS PROPERLY VISIBLE**
         if hasattr(self, 'selected_cells') and self.selected_cells:
             # Only update selection if not actively painting
             if not (hasattr(self, '_currently_painting') and self._currently_painting):
@@ -3232,7 +3515,7 @@ class TextGridEditor:
         return distance
     
     def thin_out_forest(self, mode="thin"):
-        """Randomly thin out selected forest cells (f/F → . or space)."""
+        """Randomly thin out selected forest cells (f/F â†’ . or space)."""
         if not self.selected_cells:
             messagebox.showwarning("No Selection", "Please select an area first.")
             return
@@ -3265,7 +3548,7 @@ class TextGridEditor:
                 self.undo_stack.pop(0)
 
         self.update_selection()
-        print(f"🌲 Forest thinned with mode={mode}, changes={len(undo_action)}")
+        print(f"ðŸŒ² Forest thinned with mode={mode}, changes={len(undo_action)}")
 
 BIOME_PROFILES = {
     "forest": {
@@ -3284,14 +3567,14 @@ BIOME_PROFILES = {
         "shapes": ["swamp_meandering", "swamp_irregular", "swamp_patchy"], 
     },
     "sand": {
-        "layers": [',', 'z', 'd', 'D'],  # Light sand → Small dunes → Tall dunes → Sand plateaus
+        "layers": [',', 'z', 'd', 'D'],  # Light sand â†’ Small dunes â†’ Tall dunes â†’ Sand plateaus
         "probabilities": [60, 20, 15, 5],  # Mostly light sand, fewer dunes
         "shapes": ["dune_horizontal", "dune_vertical", "patchy", "explosion", "implosion"],
     },
     "dry_sand": {
         "layers": [' ', '.', ',', 'd', 'D'],
         "probabilities": [45, 28, 19, 6, 2],  # Sparse dry ground with occasional darker crack chars
-        "shapes": ["patchy", "irregular", "spotty", "explosion", "implosion"],
+        "shapes": ["patchy", "irregular", "spotty", "random_forks", "explosion", "implosion"],
     },
 }
 
@@ -3310,21 +3593,46 @@ def generate_spotty_shape(width, height):
 
     return shape_mask
 
+def generate_random_forks_shape(width, height):
+    """Dry-sand base mask tuned for region-based random fork overlays."""
+    shape_mask = np.random.choice(
+        np.array([0.22, 0.5, 0.76, 0.95], dtype=np.float32),
+        size=(height, width),
+        p=[0.24, 0.42, 0.24, 0.10]
+    ).astype(np.float32)
+
+    # Light smoothing keeps the background natural but still noisy.
+    p = np.pad(shape_mask, 1, mode='edge')
+    shape_mask = (
+        p[:-2, :-2] + p[:-2, 1:-1] + p[:-2, 2:] +
+        p[1:-1, :-2] + p[1:-1, 1:-1] + p[1:-1, 2:] +
+        p[2:, :-2] + p[2:, 1:-1] + p[2:, 2:]
+    ) / 9.0
+
+    return shape_mask
+
 def generate_patchy_shape(width, height):
     """Creates patchy terrain with randomly shaped clusters."""
-    shape_mask = [[1 for _ in range(width)] for _ in range(height)]
+    shape_mask = np.ones((height, width), dtype=np.float32)
+    area = width * height
+    if area <= 0:
+        return shape_mask
 
-    for _ in range(int(width * height * 0.1)):  # 10% of the area has patches
+    # Cap patch count to prevent long stalls on very large selections.
+    patch_count = int(area * 0.06)
+    patch_count = max(80, min(14000, patch_count))
+
+    for _ in range(patch_count):
         patch_x = random.randint(0, width - 1)
         patch_y = random.randint(0, height - 1)
-        shape_mask[patch_y][patch_x] = random.uniform(0, 0.3)  # Dense centers
+        shape_mask[patch_y, patch_x] = min(shape_mask[patch_y, patch_x], random.uniform(0, 0.3))
 
-        # Spread outward randomly
-        for _ in range(random.randint(2, 6)):
+        spread_steps = random.randint(2, 5)
+        for _ in range(spread_steps):
             dx, dy = random.randint(-2, 2), random.randint(-2, 2)
             nx, ny = patch_x + dx, patch_y + dy
             if 0 <= nx < width and 0 <= ny < height:
-                shape_mask[ny][nx] = min(shape_mask[ny][nx], 0.5)  # Patchy spread
+                shape_mask[ny, nx] = min(shape_mask[ny, nx], 0.5)
 
     return shape_mask
 
@@ -3356,7 +3664,7 @@ def generate_ellipse_shape_implosion(width, height):
             norm_y = (y - center_y) / (height / 2)
             distance = math.sqrt(norm_x**2 + norm_y**2)
 
-            # **🚀 Inverted Scaling**
+            # **ðŸš€ Inverted Scaling**
             shape_mask[y][x] = max(0, 1 - distance)  # Now 1 at center, 0 at edges (Implosion)
     
     return shape_mask
@@ -3379,7 +3687,7 @@ def generate_crescent_shape(width, height):
             if angle_factor > 0.5:
                 shape_mask[y][x] = 1  # Empty space
             else:
-                shape_mask[y][x] = max(0, distance * 0.8)  # 🔥 Scale down
+                shape_mask[y][x] = max(0, distance * 0.8)  # ðŸ”¥ Scale down
 
     return shape_mask
 
@@ -3387,13 +3695,24 @@ def generate_crescent_shape(width, height):
 
 def generate_irregular_shape(width, height):
     """Returns a shape with irregular noise patterns."""
-    shape_mask = [[random.uniform(0.5, 1) for _ in range(width)] for _ in range(height)]
+    shape_mask = np.random.uniform(0.5, 1.0, (height, width)).astype(np.float32)
+    area = width * height
 
-    for _ in range(10):  # Apply smoothing iterations
-        for y in range(1, height - 1):
-            for x in range(1, width - 1):
-                neighbors = [shape_mask[y+dy][x+dx] for dy in (-1, 0, 1) for dx in (-1, 0, 1)]
-                shape_mask[y][x] = sum(neighbors) / len(neighbors)  # Averaging for smoothness
+    # Adaptive smoothing count to keep large regions responsive.
+    if area <= 50000:
+        iterations = 8
+    elif area <= 200000:
+        iterations = 5
+    else:
+        iterations = 3
+
+    for _ in range(iterations):
+        p = np.pad(shape_mask, 1, mode='edge')
+        shape_mask = (
+            p[:-2, :-2] + p[:-2, 1:-1] + p[:-2, 2:] +
+            p[1:-1, :-2] + p[1:-1, 1:-1] + p[1:-1, 2:] +
+            p[2:, :-2] + p[2:, 1:-1] + p[2:, 2:]
+        ) / 9.0
 
     return shape_mask
 def generate_meandering_shape(width, height):
@@ -3535,6 +3854,7 @@ SHAPE_GENERATORS = {
     "irregular": generate_irregular_shape,
     "patchy": generate_patchy_shape,
     "spotty": generate_spotty_shape,
+    "random_forks": generate_random_forks_shape,
     "meandering": generate_meandering_shape,
 
     # **New Sand Patterns**
@@ -3570,3 +3890,4 @@ if __name__ == "__main__":
 
     # Print the profiler's statistics
     print(s.getvalue())
+
