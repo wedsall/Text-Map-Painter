@@ -115,7 +115,7 @@ class TextGridEditor:
         self.mem_debug_echo_stdout = False
         self.mem_debug_log_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            "map_editor5_memdebug.log"
+            "map_editor6_memdebug.log"
         )
         self._psutil_process = None
 
@@ -430,7 +430,66 @@ class TextGridEditor:
                 replace_selection=False
             )
         )
+        smart_select_menu.add_command(
+            label="Path Corona: One Side 120 deg (radius 1)",
+            command=lambda: self.arm_smart_select(
+                mode="path_corona",
+                corona_radius=1,
+                corona_arc_degrees=120,
+                replace_selection=False
+            )
+        )
         smart_select_menu.add_command(label="Path Corona: Custom...", command=self.arm_smart_select_path_custom)
+        smart_select_menu.add_separator()
+        smart_select_menu.add_command(
+            label="Full Corona: Both Sides (radius 1)",
+            command=lambda: self.arm_smart_select(
+                mode="full_corona",
+                corona_radius=1,
+                replace_selection=False
+            )
+        )
+        smart_select_menu.add_command(
+            label="Full Corona: Both Sides (radius 3)",
+            command=lambda: self.arm_smart_select(
+                mode="full_corona",
+                corona_radius=3,
+                replace_selection=False
+            )
+        )
+        smart_select_menu.add_command(
+            label="Radiating Corona: Outward (radius 1)",
+            command=lambda: self.arm_smart_select(
+                mode="radiating_corona",
+                corona_radius=1,
+                replace_selection=False
+            )
+        )
+        smart_select_menu.add_command(
+            label="Radiating Corona: Outward (radius 3)",
+            command=lambda: self.arm_smart_select(
+                mode="radiating_corona",
+                corona_radius=3,
+                replace_selection=False
+            )
+        )
+        smart_select_menu.add_command(
+            label="Corona: Custom...",
+            command=self.arm_smart_select_corona_custom
+        )
+        smart_select_menu.add_separator()
+        smart_select_menu.add_command(
+            label="Follow Line: Auto (longest)",
+            command=lambda: self.arm_smart_select(mode="follow_line", line_direction="auto")
+        )
+        smart_select_menu.add_command(
+            label="Follow Line: Horizontal",
+            command=lambda: self.arm_smart_select(mode="follow_line", line_direction="horizontal")
+        )
+        smart_select_menu.add_command(
+            label="Follow Line: Vertical",
+            command=lambda: self.arm_smart_select(mode="follow_line", line_direction="vertical")
+        )
         smart_select_menu.add_separator()
         smart_select_menu.add_command(
             label="Similar Type Radius: 3",
@@ -453,6 +512,14 @@ class TextGridEditor:
             command=self.arm_smart_select_type_radius_custom
         )
         smart_select_btn["menu"] = smart_select_menu
+
+        outer_border_btn = ttk.Button(
+            bottom_frame,
+            text="Outer Border",
+            command=self.select_outer_border_outward,
+            takefocus=False
+        )
+        outer_border_btn.pack(side=tk.LEFT, padx=5)
 
         custom_fill_btn = ttk.Button(
             bottom_frame,
@@ -608,6 +675,7 @@ class TextGridEditor:
     def clear_selection(self, event=None):
         """Simple clear selection with performance mode handling."""
         selection_size = len(self.selected_cells)
+        smart_select_was_armed = self._disarm_smart_select()
         print(f"ðŸ”„ CLEARING SELECTION: {selection_size} cells...")
         
         # **âœ… EXIT PERFORMANCE MODE IF ACTIVE**
@@ -630,8 +698,17 @@ class TextGridEditor:
         # Force canvas update
         self.canvas.update_idletasks()
         
-        self.debug_label.config(text=f"Selection cleared ({selection_size} cells)")
+        tool_note = "; Smart Select canceled" if smart_select_was_armed else ""
+        self.debug_label.config(text=f"Selection cleared ({selection_size} cells){tool_note}")
         print(f"âœ… SELECTION CLEARED: {selection_size} cells")
+
+    def _disarm_smart_select(self):
+        """Cancel the currently armed Smart Select tool, if any."""
+        was_armed = bool(getattr(self, 'smart_select_pending', None))
+        self.smart_select_pending = None
+        if was_armed:
+            print("Smart Select tool disarmed")
+        return was_armed
 
     def on_vertical_scroll(self, *args):
         """Enhanced vertical scroll that maintains selection sync."""
@@ -1373,7 +1450,6 @@ class TextGridEditor:
 
         if self.smart_select_pending and not ctrl_held:
             settings = self.smart_select_pending
-            self.smart_select_pending = None
             self.smart_select_at(
                 row=row,
                 col=col,
@@ -1725,6 +1801,8 @@ class TextGridEditor:
 
     def on_keypress(self, event):
         """Optimized keypress handling that's fast regardless of selection size."""
+        if getattr(event, 'keysym', '') == 'Escape':
+            return
         char = event.char
         if not char:
             return
@@ -1789,6 +1867,12 @@ class TextGridEditor:
             # **âœ… SINGLE CANVAS UPDATE**
             self.canvas.update_idletasks()
 
+        # A typed fill completes the current Smart Select painting operation.
+        smart_select_was_armed = self._disarm_smart_select()
+        if smart_select_was_armed:
+            self.debug_label.config(
+                text=f"Fill complete: {cells_changed} cells changed; Smart Select disarmed."
+            )
         print(f"âœ… KEYPRESS COMPLETE: {cells_changed} cells changed, {len(visible_updates)} visible updates")
 
 
@@ -2307,6 +2391,7 @@ class TextGridEditor:
             if len(self.undo_stack) > self.max_undo:
                 self.undo_stack.pop(0)  # âœ… Limit stack size to prevent memory issues
 
+        self._disarm_smart_select()
         self.update_selection()
 
     def open_custom_fill_dialog(self):
@@ -2384,6 +2469,7 @@ class TextGridEditor:
                     color = self.get_char_color(char)
                     self.update_canvas_object(row, col, char, color)
 
+        self._disarm_smart_select()
         self.update_selection()
         self.debug_label.config(
             text=(
@@ -2572,6 +2658,240 @@ class TextGridEditor:
         ], dtype=self.grid.dtype)
         return np.isin(self.grid, blank_values)
 
+    def _map_center_from_filled(self, filled_mask):
+        """Return the center of the populated map's bounding box."""
+        populated = np.argwhere(filled_mask)
+        if populated.size == 0:
+            return (self.rows - 1) / 2.0, (self.cols - 1) / 2.0
+        min_row, min_col = populated.min(axis=0)
+        max_row, max_col = populated.max(axis=0)
+        return (float(min_row + max_row) / 2.0, float(min_col + max_col) / 2.0)
+
+    def _expand_mask_radially_outward(self, source_mask, allowed_mask, radius, center):
+        """Expand through each path cell's locally outward-facing side only."""
+        selected = np.zeros_like(source_mask, dtype=bool)
+        center_row, center_col = center
+        radius = max(1, int(radius))
+        tangent_radius = max(2, min(4, radius + 2))
+        cone_cosine = math.cos(math.radians(67.5))
+
+        def outward_normal(row, col):
+            min_row = max(0, row - tangent_radius)
+            max_row = min(self.rows, row + tangent_radius + 1)
+            min_col = max(0, col - tangent_radius)
+            max_col = min(self.cols, col + tangent_radius + 1)
+            nearby = np.argwhere(source_mask[min_row:max_row, min_col:max_col])
+
+            tangent_row = None
+            tangent_col = None
+            if nearby.shape[0] >= 2:
+                sample_rows = nearby[:, 0].astype(float) + min_row
+                sample_cols = nearby[:, 1].astype(float) + min_col
+                sample_rows -= sample_rows.mean()
+                sample_cols -= sample_cols.mean()
+                covariance_rr = float(np.dot(sample_rows, sample_rows))
+                covariance_cc = float(np.dot(sample_cols, sample_cols))
+                covariance_rc = float(np.dot(sample_rows, sample_cols))
+                covariance_total = covariance_rr + covariance_cc
+                anisotropy = 0.0
+                if covariance_total > 0.0:
+                    anisotropy = math.sqrt(
+                        (covariance_cc - covariance_rr) ** 2 +
+                        4.0 * covariance_rc * covariance_rc
+                    ) / covariance_total
+                if anisotropy >= 0.25:
+                    angle = 0.5 * math.atan2(
+                        2.0 * covariance_rc,
+                        covariance_cc - covariance_rr,
+                    )
+                    tangent_col = math.cos(angle)
+                    tangent_row = math.sin(angle)
+
+            radial_row = row - center_row
+            radial_col = col - center_col
+            radial_length = math.hypot(radial_row, radial_col)
+
+            if tangent_row is None or tangent_col is None:
+                if radial_length <= 1e-9:
+                    return None
+                return radial_row / radial_length, radial_col / radial_length
+
+            normal_row = -tangent_col
+            normal_col = tangent_row
+            if normal_row * radial_row + normal_col * radial_col < 0.0:
+                normal_row = -normal_row
+                normal_col = -normal_col
+            return normal_row, normal_col
+
+        for row, col in np.argwhere(source_mask):
+            row = int(row)
+            col = int(col)
+            normal = outward_normal(row, col)
+            if normal is None:
+                continue
+            normal_row, normal_col = normal
+            source_distance = (row - center_row) ** 2 + (col - center_col) ** 2
+
+            for d_row in range(-radius, radius + 1):
+                for d_col in range(-radius, radius + 1):
+                    if d_row == 0 and d_col == 0:
+                        continue
+                    offset_length = math.hypot(d_row, d_col)
+                    outward_projection = d_row * normal_row + d_col * normal_col
+                    if outward_projection / offset_length < cone_cosine:
+                        continue
+
+                    next_row = row + d_row
+                    next_col = col + d_col
+                    if not (0 <= next_row < self.rows and 0 <= next_col < self.cols):
+                        continue
+                    if not allowed_mask[next_row, next_col]:
+                        continue
+                    next_distance = (
+                        (next_row - center_row) ** 2 +
+                        (next_col - center_col) ** 2
+                    )
+                    if next_distance + 1e-9 < source_distance:
+                        continue
+                    selected[next_row, next_col] = True
+        return selected
+
+    def _compute_character_corona_mask(self, seed_row, seed_col, corona_radius=1, outward_only=False):
+        """Select blank cells around one connected, exact-character path."""
+        blank_mask = self._compute_blank_mask()
+        if blank_mask is None:
+            return None, None, "No grid loaded."
+        if blank_mask[seed_row, seed_col]:
+            return None, None, "Corona starts on a populated path cell."
+
+        target_ord = int(self.grid[seed_row, seed_col])
+        target_char = chr(target_ord)
+        same_character = self.grid == target_ord
+        target_path = self._flood_fill_component_mask(
+            same_character,
+            seed_row,
+            seed_col,
+            include_diagonal=True,
+        )
+        radius = max(1, int(corona_radius))
+
+        if outward_only:
+            filled_mask = ~blank_mask
+            center = self._map_center_from_filled(filled_mask)
+            selection_mask = self._expand_mask_radially_outward(
+                source_mask=target_path,
+                allowed_mask=blank_mask,
+                radius=radius,
+                center=center,
+            )
+        else:
+            selection_mask = np.zeros_like(blank_mask, dtype=bool)
+            frontier = target_path.copy()
+            for _ in range(radius):
+                touching = self._count_neighbors(frontier, include_diagonal=True) >= 1
+                new_layer = blank_mask & (~selection_mask) & touching
+                if not np.any(new_layer):
+                    break
+                selection_mask |= new_layer
+                frontier = new_layer
+
+        if not np.any(selection_mask):
+            side = "outward " if outward_only else ""
+            return None, target_char, f"No blank {side}corona cells found for '{target_char}'."
+        return selection_mask, target_char, None
+
+    def _compute_follow_line_mask(self, seed_row, seed_col, direction="auto"):
+        """Select the unbroken horizontal or vertical run matching the clicked character."""
+        blank_mask = self._compute_blank_mask()
+        if blank_mask is None:
+            return None, None, None, "No grid loaded."
+        if blank_mask[seed_row, seed_col]:
+            return None, None, None, "Follow Line starts on a populated cell."
+
+        target_ord = int(self.grid[seed_row, seed_col])
+        target_char = chr(target_ord)
+
+        left = col = seed_col
+        while col - 1 >= 0 and int(self.grid[seed_row, col - 1]) == target_ord:
+            col -= 1
+        left = col
+        right = col = seed_col
+        while col + 1 < self.cols and int(self.grid[seed_row, col + 1]) == target_ord:
+            col += 1
+        right = col
+
+        top = row = seed_row
+        while row - 1 >= 0 and int(self.grid[row - 1, seed_col]) == target_ord:
+            row -= 1
+        top = row
+        bottom = row = seed_row
+        while row + 1 < self.rows and int(self.grid[row + 1, seed_col]) == target_ord:
+            row += 1
+        bottom = row
+
+        horizontal_length = right - left + 1
+        vertical_length = bottom - top + 1
+        direction = (direction or "auto").lower()
+        if direction == "auto":
+            direction = "horizontal" if horizontal_length >= vertical_length else "vertical"
+
+        selection_mask = np.zeros((self.rows, self.cols), dtype=bool)
+        if direction == "horizontal":
+            selection_mask[seed_row, left:right + 1] = True
+        elif direction == "vertical":
+            selection_mask[top:bottom + 1, seed_col] = True
+        else:
+            return None, target_char, None, f"Unknown line direction: {direction}"
+        return selection_mask, target_char, direction, None
+
+    def _compute_outer_border_outward_mask(self, radius=1):
+        """Find the populated silhouette and select blank cells radiating away from it."""
+        blank_mask = self._compute_blank_mask()
+        if blank_mask is None:
+            return None, "No grid loaded."
+        filled_mask = ~blank_mask
+        if not np.any(filled_mask):
+            return None, "The map has no populated cells."
+
+        border = np.zeros_like(filled_mask, dtype=bool)
+        # Row and column extremes form the outer silhouette. Small breaks do
+        # not let the later expansion turn back toward the map interior.
+        for row in range(self.rows):
+            columns = np.flatnonzero(filled_mask[row])
+            if columns.size:
+                border[row, int(columns[0])] = True
+                border[row, int(columns[-1])] = True
+        for col in range(self.cols):
+            rows = np.flatnonzero(filled_mask[:, col])
+            if rows.size:
+                border[int(rows[0]), col] = True
+                border[int(rows[-1]), col] = True
+
+        center = self._map_center_from_filled(filled_mask)
+        populated = np.argwhere(filled_mask)
+        min_row, min_col = populated.min(axis=0)
+        max_row, max_col = populated.max(axis=0)
+        half_height = max(1.0, float(max_row - min_row) / 2.0)
+        half_width = max(1.0, float(max_col - min_col) / 2.0)
+        row_grid, col_grid = np.indices(filled_mask.shape)
+        normalized_radius = np.sqrt(
+            ((row_grid - center[0]) / half_height) ** 2 +
+            ((col_grid - center[1]) / half_width) ** 2
+        )
+        # A lone interior feature may be the first/last populated cell in its
+        # row or column. Reject those centerward extrema before expanding.
+        border &= normalized_radius >= 0.75
+
+        selection_mask = self._expand_mask_radially_outward(
+            source_mask=border,
+            allowed_mask=blank_mask,
+            radius=max(1, int(radius)),
+            center=center,
+        )
+        if not np.any(selection_mask):
+            return None, "No blank cells exist outside the detected border."
+        return selection_mask, None
+
     def arm_smart_select(
         self,
         mode="region_flood",
@@ -2579,7 +2899,9 @@ class TextGridEditor:
         adjacency_threshold=2,
         min_region_size=18,
         corona_radius=1,
+        corona_arc_degrees=360,
         type_radius=3,
+        line_direction="auto",
         include_adjacent_filled=False,
         replace_selection=False
     ):
@@ -2589,18 +2911,56 @@ class TextGridEditor:
 
         mode = (mode or "region_flood").lower()
 
+        if mode in ("full_corona", "radiating_corona"):
+            outward_only = mode == "radiating_corona"
+            self.smart_select_pending = {
+                "mode": mode,
+                "corona_radius": max(1, int(corona_radius)),
+                "replace_selection": False,
+            }
+            corona_name = "Radiating Outward Corona" if outward_only else "Full Corona"
+            self.debug_label.config(
+                text=(
+                    f"Smart Select armed: {corona_name} "
+                    f"(radius {self.smart_select_pending['corona_radius']}). "
+                    "Click a populated path cell. (adds to selection)"
+                )
+            )
+            return
+
+        if mode == "follow_line":
+            direction = (line_direction or "auto").lower()
+            if direction not in ("auto", "horizontal", "vertical"):
+                direction = "auto"
+            self.smart_select_pending = {
+                "mode": "follow_line",
+                "line_direction": direction,
+                "replace_selection": False,
+            }
+            self.debug_label.config(
+                text=(
+                    f"Smart Select armed: Follow Line ({direction}). "
+                    "Click a populated cell. Selection stops when its character changes."
+                )
+            )
+            return
+
         if mode == "path_corona":
             self.smart_select_pending = {
                 "mode": "path_corona",
                 "corona_radius": max(1, int(corona_radius)),
+                "corona_arc_degrees": max(1, min(360, int(corona_arc_degrees))),
                 "include_adjacent_filled": bool(include_adjacent_filled),
                 "replace_selection": False,
             }
             include_note = " + adjacent filled" if self.smart_select_pending["include_adjacent_filled"] else ""
+            arc_note = ""
+            if self.smart_select_pending["corona_arc_degrees"] < 360:
+                arc_note = f", arc {self.smart_select_pending['corona_arc_degrees']} deg"
             self.debug_label.config(
                 text=(
                     "Smart Select armed: Path Corona Blank "
-                    f"(radius {self.smart_select_pending['corona_radius']}{include_note}). "
+                    f"(radius {self.smart_select_pending['corona_radius']}{include_note}{arc_note}). "
                     "Click a blank cell touching filled terrain. (adds to selection)"
                 )
             )
@@ -2697,10 +3057,85 @@ class TextGridEditor:
         if corona_radius is None:
             return
 
+        corona_arc_degrees = simpledialog.askinteger(
+            "Path Corona",
+            "Directional arc degrees (360 = all sides, 120 = one side):",
+            initialvalue=360,
+            minvalue=1,
+            maxvalue=360
+        )
+        if corona_arc_degrees is None:
+            return
+
         self.arm_smart_select(
             mode="path_corona",
             corona_radius=corona_radius,
+            corona_arc_degrees=corona_arc_degrees,
             replace_selection=False,
+        )
+
+    def arm_smart_select_corona_custom(self):
+        if self.grid is None:
+            messagebox.showwarning("No Map", "Load a map first.")
+            return
+
+        max_radius = max(1, max(self.rows, self.cols))
+        corona_radius = simpledialog.askinteger(
+            "Corona",
+            "Corona radius (cells):",
+            initialvalue=3,
+            minvalue=1,
+            maxvalue=max_radius,
+        )
+        if corona_radius is None:
+            return
+
+        outward_only = messagebox.askyesno(
+            "Corona Direction",
+            "Radiate only outward from the map center?\n\n"
+            "Yes = outward only\nNo = full corona on both sides",
+        )
+        self.arm_smart_select(
+            mode="radiating_corona" if outward_only else "full_corona",
+            corona_radius=corona_radius,
+            replace_selection=False,
+        )
+
+    def select_outer_border_outward(self):
+        """Prompt for a radius, then select an outward-only map-border corona."""
+        if self.grid is None or self.rows == 0 or self.cols == 0:
+            messagebox.showwarning("No Map", "Load a map first.")
+            return
+
+        self._disarm_smart_select()
+        radius = simpledialog.askinteger(
+            "Outer Border",
+            "Outward outline radius (cells):",
+            initialvalue=1,
+            minvalue=1,
+            maxvalue=max(1, max(self.rows, self.cols)),
+        )
+        if radius is None:
+            return
+
+        fill_mask, error = self._compute_outer_border_outward_mask(radius)
+        if fill_mask is None:
+            self.debug_label.config(text=f"Outer Border: {error}")
+            return
+
+        selected_cells = {(int(row), int(col)) for row, col in np.argwhere(fill_mask)}
+        self.selected_cells.update(selected_cells)
+        self.canvas.delete('selection')
+        self.update_selection()
+        self.debug_label.config(
+            text=(
+                f"Outer Border complete: {len(selected_cells)} outward cells "
+                f"selected (radius {radius})."
+            )
+        )
+        print(
+            f"Outer Border complete: selected={len(selected_cells)}, "
+            f"radius={radius}, append=True"
         )
 
     def arm_smart_select_type_radius_custom(self):
@@ -2778,7 +3213,218 @@ class TextGridEditor:
 
         return fill_mask, None
 
-    def _compute_path_corona_mask(self, seed_row, seed_col, corona_radius=1, include_adjacent_filled=False):
+    def _filter_corona_to_directional_arc(
+        self,
+        selection_mask,
+        target_filled,
+        seed_row,
+        seed_col,
+        corona_radius,
+        corona_arc_degrees,
+    ):
+        """Limit a corona to the same local side of the path as the clicked cell."""
+        corona_arc_degrees = max(1, min(360, int(corona_arc_degrees)))
+        if corona_arc_degrees >= 360:
+            return selection_mask
+
+        rows, cols = selection_mask.shape
+        search_radius = max(2, min(int(corona_radius) + 3, 32))
+
+        def nearest_filled(row, col):
+            best_dist = None
+            nearest = []
+            min_row = max(0, row - search_radius)
+            max_row = min(rows - 1, row + search_radius)
+            min_col = max(0, col - search_radius)
+            max_col = min(cols - 1, col + search_radius)
+
+            for near_row in range(min_row, max_row + 1):
+                for near_col in range(min_col, max_col + 1):
+                    if not target_filled[near_row, near_col]:
+                        continue
+                    d_row = row - near_row
+                    d_col = col - near_col
+                    dist_sq = d_row * d_row + d_col * d_col
+                    if dist_sq == 0:
+                        continue
+                    if best_dist is None or dist_sq < best_dist:
+                        best_dist = dist_sq
+                        nearest = [(near_row, near_col)]
+                    elif dist_sq == best_dist:
+                        nearest.append((near_row, near_col))
+            return nearest
+
+        def local_tangent(row, col):
+            samples = []
+            tangent_radius = 2
+            min_row = max(0, row - tangent_radius)
+            max_row = min(rows - 1, row + tangent_radius)
+            min_col = max(0, col - tangent_radius)
+            max_col = min(cols - 1, col + tangent_radius)
+
+            for near_row in range(min_row, max_row + 1):
+                for near_col in range(min_col, max_col + 1):
+                    if target_filled[near_row, near_col]:
+                        samples.append((near_row, near_col))
+
+            if len(samples) < 2:
+                return None
+
+            mean_row = sum(row for row, _ in samples) / len(samples)
+            mean_col = sum(col for _, col in samples) / len(samples)
+            cov_cc = 0.0
+            cov_rr = 0.0
+            cov_cr = 0.0
+            for sample_row, sample_col in samples:
+                d_col = sample_col - mean_col
+                d_row = sample_row - mean_row
+                cov_cc += d_col * d_col
+                cov_rr += d_row * d_row
+                cov_cr += d_col * d_row
+
+            if cov_cc == 0.0 and cov_rr == 0.0:
+                return None
+
+            angle = 0.5 * math.atan2(2.0 * cov_cr, cov_cc - cov_rr)
+            tangent_col = math.cos(angle)
+            tangent_row = math.sin(angle)
+            if tangent_col < 0 or (abs(tangent_col) < 0.0001 and tangent_row < 0):
+                tangent_col = -tangent_col
+                tangent_row = -tangent_row
+            return tangent_col, tangent_row
+
+        def side_measure(row, col):
+            nearest = nearest_filled(row, col)
+            if not nearest:
+                return None
+
+            filled_row = sum(cell[0] for cell in nearest) / len(nearest)
+            filled_col = sum(cell[1] for cell in nearest) / len(nearest)
+            vector_col = col - filled_col
+            vector_row = row - filled_row
+            vector_len = math.hypot(vector_col, vector_row)
+            if vector_len == 0:
+                return None
+
+            tangent_vectors = []
+            for near_row, near_col in nearest:
+                tangent = local_tangent(near_row, near_col)
+                if tangent is not None:
+                    tangent_vectors.append(tangent)
+
+            if tangent_vectors:
+                tangent_col = sum(vector[0] for vector in tangent_vectors) / len(tangent_vectors)
+                tangent_row = sum(vector[1] for vector in tangent_vectors) / len(tangent_vectors)
+                tangent_len = math.hypot(tangent_col, tangent_row)
+                if tangent_len > 0:
+                    tangent_col /= tangent_len
+                    tangent_row /= tangent_len
+                else:
+                    tangent_vectors = []
+
+            if not tangent_vectors:
+                tangent_col = 1.0
+                tangent_row = 0.0
+
+            side = tangent_col * vector_row - tangent_row * vector_col
+            return side, vector_col / vector_len, vector_row / vector_len, tangent_col, tangent_row
+
+        seed_measure = side_measure(seed_row, seed_col)
+        if seed_measure is None:
+            return selection_mask
+
+        seed_side = seed_measure[0]
+        if abs(seed_side) < 0.0001:
+            return selection_mask
+
+        cos_threshold = math.cos(math.radians(corona_arc_degrees / 2.0))
+        candidate_mask = np.zeros_like(selection_mask, dtype=bool)
+
+        def is_target_gap_bridge(row, col):
+            """A blank between target cells is a crossing point, not one side."""
+            if row == seed_row and col == seed_col:
+                return False
+
+            north = row > 0 and target_filled[row - 1, col]
+            south = row + 1 < rows and target_filled[row + 1, col]
+            west = col > 0 and target_filled[row, col - 1]
+            east = col + 1 < cols and target_filled[row, col + 1]
+            if (north and south) or (west and east):
+                return True
+
+            north_west = row > 0 and col > 0 and target_filled[row - 1, col - 1]
+            north_east = row > 0 and col + 1 < cols and target_filled[row - 1, col + 1]
+            south_west = row + 1 < rows and col > 0 and target_filled[row + 1, col - 1]
+            south_east = row + 1 < rows and col + 1 < cols and target_filled[row + 1, col + 1]
+            return (north_west and south_east) or (north_east and south_west)
+
+        for row, col in np.argwhere(selection_mask):
+            row = int(row)
+            col = int(col)
+            if is_target_gap_bridge(row, col):
+                continue
+
+            measure = side_measure(row, col)
+            if measure is None:
+                continue
+
+            side, vector_col, vector_row, tangent_col, tangent_row = measure
+            if side * seed_side <= 0:
+                continue
+
+            if seed_side > 0:
+                normal_col = -tangent_row
+                normal_row = tangent_col
+            else:
+                normal_col = tangent_row
+                normal_row = -tangent_col
+
+            dot = vector_col * normal_col + vector_row * normal_row
+            if dot >= cos_threshold:
+                candidate_mask[row, col] = True
+
+        if not candidate_mask[seed_row, seed_col]:
+            return candidate_mask
+
+        filtered_mask = np.zeros_like(selection_mask, dtype=bool)
+        filtered_mask[seed_row, seed_col] = True
+        queue = deque([(seed_row, seed_col)])
+        directions = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (-1, 1), (1, -1), (1, 1),
+        ]
+
+        while queue:
+            row, col = queue.popleft()
+            for d_row, d_col in directions:
+                next_row = row + d_row
+                next_col = col + d_col
+                if not (0 <= next_row < rows and 0 <= next_col < cols):
+                    continue
+                if filtered_mask[next_row, next_col] or not candidate_mask[next_row, next_col]:
+                    continue
+
+                # Keep the same corner guard as the boundary tracing so this
+                # component walk cannot slip diagonally around the target line.
+                if d_row != 0 and d_col != 0:
+                    side_a = target_filled[row, next_col]
+                    side_b = target_filled[next_row, col]
+                    if side_a and side_b:
+                        continue
+
+                filtered_mask[next_row, next_col] = True
+                queue.append((next_row, next_col))
+
+        return filtered_mask
+
+    def _compute_path_corona_mask(
+        self,
+        seed_row,
+        seed_col,
+        corona_radius=1,
+        corona_arc_degrees=360,
+        include_adjacent_filled=False,
+    ):
         blank_mask = self._compute_blank_mask()
         if blank_mask is None:
             return None, "No grid loaded."
@@ -2804,17 +3450,31 @@ class TextGridEditor:
         if not adjacent_filled:
             return None, "Clicked blank must touch a filled cell."
 
-        # Anchor to contiguous filled component(s) that touch the clicked blank.
-        target_filled = np.zeros_like(filled_mask, dtype=bool)
+        # Follow exactly one character. The old implementation flooded every
+        # non-blank character, so a '.' path touching '#', 'w', etc. silently
+        # changed paths. Prefer the most represented adjacent character, with
+        # an orthogonal neighbor winning a tie.
+        character_counts = {}
         for f_row, f_col in adjacent_filled:
-            if target_filled[f_row, f_col]:
-                continue
-            target_filled |= self._flood_fill_component_mask(
-                filled_mask,
-                f_row,
-                f_col,
-                include_diagonal=True
+            target_ord = int(self.grid[f_row, f_col])
+            character_counts[target_ord] = character_counts.get(target_ord, 0) + 1
+        adjacent_filled.sort(
+            key=lambda cell: (
+                -character_counts[int(self.grid[cell[0], cell[1]])],
+                abs(cell[0] - seed_row) + abs(cell[1] - seed_col) != 1,
+                cell[0],
+                cell[1],
             )
+        )
+        anchor_row, anchor_col = adjacent_filled[0]
+        target_ord = int(self.grid[anchor_row, anchor_col])
+        same_character = self.grid == target_ord
+        target_filled = self._flood_fill_component_mask(
+            same_character,
+            anchor_row,
+            anchor_col,
+            include_diagonal=True
+        )
 
         target_neighbors = self._count_neighbors(target_filled, include_diagonal=True)
         target_boundary_blank = blank_mask & (target_neighbors >= 1)
@@ -2853,6 +3513,17 @@ class TextGridEditor:
                 break
             selection_mask |= new_layer
             frontier_mask = new_layer
+
+        selection_mask = self._filter_corona_to_directional_arc(
+            selection_mask=selection_mask,
+            target_filled=target_filled,
+            seed_row=seed_row,
+            seed_col=seed_col,
+            corona_radius=corona_radius,
+            corona_arc_degrees=corona_arc_degrees,
+        )
+        if not np.any(selection_mask):
+            return None, "No path corona cells found inside the selected directional arc."
 
         if include_adjacent_filled:
             touch_selection = self._count_neighbors(selection_mask, include_diagonal=True) >= 1
@@ -2903,7 +3574,9 @@ class TextGridEditor:
         adjacency_threshold=2,
         min_region_size=18,
         corona_radius=1,
+        corona_arc_degrees=360,
         type_radius=3,
+        line_direction="auto",
         include_adjacent_filled=False,
         replace_selection=False
     ):
@@ -2920,16 +3593,33 @@ class TextGridEditor:
         adjacency_threshold = max(1, min(8, int(adjacency_threshold)))
         min_region_size = max(1, int(min_region_size))
         corona_radius = max(1, int(corona_radius))
+        corona_arc_degrees = max(1, min(360, int(corona_arc_degrees)))
         type_radius = max(1, int(type_radius))
+        line_direction = (line_direction or "auto").lower()
         include_adjacent_filled = bool(include_adjacent_filled)
         selected_type_char = None
+        selected_line_direction = None
 
         if mode == "path_corona":
             fill_mask, error = self._compute_path_corona_mask(
                 seed_row=row,
                 seed_col=col,
                 corona_radius=corona_radius,
+                corona_arc_degrees=corona_arc_degrees,
                 include_adjacent_filled=include_adjacent_filled,
+            )
+        elif mode in ("full_corona", "radiating_corona"):
+            fill_mask, selected_type_char, error = self._compute_character_corona_mask(
+                seed_row=row,
+                seed_col=col,
+                corona_radius=corona_radius,
+                outward_only=(mode == "radiating_corona"),
+            )
+        elif mode == "follow_line":
+            fill_mask, selected_type_char, selected_line_direction, error = self._compute_follow_line_mask(
+                seed_row=row,
+                seed_col=col,
+                direction=line_direction,
             )
         elif mode == "type_radius":
             fill_mask, selected_type_char, error = self._compute_same_type_radius_mask(
@@ -2945,7 +3635,7 @@ class TextGridEditor:
                 adjacency_threshold=adjacency_threshold,
             )
         if fill_mask is None:
-            self.debug_label.config(text=f"Smart Select: {error}")
+            self.debug_label.config(text=f"Smart Select: {error} Tool remains armed; click again or press Escape.")
             print(f"Smart Select rejected at ({row}, {col}): {error}")
             return
 
@@ -2966,21 +3656,52 @@ class TextGridEditor:
         self.update_selection()
         if mode == "path_corona":
             include_note = " + adjacent filled" if include_adjacent_filled else ""
+            arc_note = ""
+            if corona_arc_degrees < 360:
+                arc_note = f", arc {corona_arc_degrees} deg"
             self.debug_label.config(
                 text=(
                     "Smart Select Path Corona complete: "
-                    f"{selected_count} cells (radius {corona_radius}{include_note})."
+                    f"{selected_count} cells (radius {corona_radius}{include_note}{arc_note}). "
+                    "Tool remains armed until fill or Escape."
                 )
             )
             print(
                 f"Smart Select Path Corona complete at ({row}, {col}): selected={selected_count}, "
-                f"radius={corona_radius}, include_adjacent_filled={include_adjacent_filled}, append=True"
+                f"radius={corona_radius}, arc={corona_arc_degrees}, "
+                f"include_adjacent_filled={include_adjacent_filled}, append=True"
+            )
+        elif mode in ("full_corona", "radiating_corona"):
+            corona_name = "Radiating Outward Corona" if mode == "radiating_corona" else "Full Corona"
+            self.debug_label.config(
+                text=(
+                    f"Smart Select {corona_name} complete: {selected_count} cells around "
+                    f"'{selected_type_char}' (radius {corona_radius}). "
+                    "Tool remains armed until fill or Escape."
+                )
+            )
+            print(
+                f"Smart Select {corona_name} complete at ({row}, {col}): "
+                f"selected={selected_count}, char='{selected_type_char}', "
+                f"radius={corona_radius}, append=True"
+            )
+        elif mode == "follow_line":
+            self.debug_label.config(
+                text=(
+                    f"Smart Select Follow Line complete: {selected_count} '{selected_type_char}' "
+                    f"cells ({selected_line_direction}). Tool remains armed until fill or Escape."
+                )
+            )
+            print(
+                f"Smart Select Follow Line complete at ({row}, {col}): "
+                f"selected={selected_count}, char='{selected_type_char}', "
+                f"direction={selected_line_direction}, append=True"
             )
         elif mode == "type_radius":
             self.debug_label.config(
                 text=(
                     f"Smart Select Type Radius complete: {selected_count} '{selected_type_char}' cells "
-                    f"(radius {type_radius})."
+                    f"(radius {type_radius}). Tool remains armed until fill or Escape."
                 )
             )
             print(
@@ -2991,7 +3712,8 @@ class TextGridEditor:
             self.debug_label.config(
                 text=(
                     f"Smart Select Region Flood complete: {selected_count} blank cells selected "
-                    f"(run>={min_run}, adjacency>={adjacency_threshold})."
+                    f"(run>={min_run}, adjacency>={adjacency_threshold}). "
+                    "Tool remains armed until fill or Escape."
                 )
             )
             print(
@@ -3964,7 +4686,7 @@ SHAPE_GENERATORS = {
 
 def main():
     root = tk.Tk()
-    root.title("MUD Map Editor")
+    root.title("MUD Map Editor 6")
     root.geometry("800x600")  # Set an initial window size
     editor = TextGridEditor(root)
     print("Main window created")
